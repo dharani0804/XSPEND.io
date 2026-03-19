@@ -46,7 +46,7 @@ Claude analyses your actual transactions and gives specific, data-driven answers
 Set savings targets with deadlines. Get AI-generated recommendations tailored to your real spending patterns.
 
 ### 💱 Multi-Currency
-Works with USD, EUR, GBP, INR, AUD, SGD, AED and 150+ more. Built for people with accounts across multiple countries.
+Works with USD, EUR, GBP, INR. Built for people with accounts across multiple countries.
 
 ### 🔒 Private by Default
 Your data never leaves your device. No cloud database, no third-party sharing — everything stored locally.
