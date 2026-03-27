@@ -1,37 +1,167 @@
-from sqlalchemy import Column, Integer, String, Float, Date, DateTime, Boolean
+from sqlalchemy import Column, String, Float, Date, DateTime, Boolean, Text, Integer
 from sqlalchemy.sql import func
 from database import Base
+import uuid
+
+def gen_uuid():
+    return str(uuid.uuid4())
+
+class User(Base):
+    __tablename__ = "users"
+    user_id = Column(String, primary_key=True, default=gen_uuid)
+    full_name = Column(String(150))
+    email = Column(String(255), unique=True, nullable=True)
+    income_amount = Column(Float, default=0)
+    income_frequency = Column(String(30), default="monthly")
+    savings_goal_weekly = Column(Float, default=0)
+    savings_goal_monthly = Column(Float, default=0)
+    debt_payoff_goal = Column(Float, default=0)
+    financial_goal = Column(String(100), nullable=True)
+    selected_goals = Column(Text, nullable=True)
+    other_goals = Column(Text, nullable=True)
+    currency_code = Column(String(3), default="USD")
+    monthly_budget = Column(Float, default=0)
+    payday_day = Column(String, nullable=True)
+    created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+# Legacy alias
+UserProfile = User
+
+class Account(Base):
+    __tablename__ = "accounts"
+    account_id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, nullable=True)
+    account_name = Column(String(150))
+    account_type = Column(String(50), default="checking")
+    institution_name = Column(String(150), nullable=True)
+    last4_masked = Column(String(10), nullable=True)
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=func.now())
+
+class UploadedFile(Base):
+    __tablename__ = "uploaded_files"
+    uploaded_file_id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, nullable=True)
+    account_id = Column(String, nullable=True)
+    file_name = Column(String(255))
+    file_type = Column(String(30))
+    source_type = Column(String(50), nullable=True)
+    bank_name = Column(String(150), nullable=True)
+    upload_status = Column(String(30), default="uploaded")
+    parse_confidence = Column(Float, nullable=True)
+    transactions_extracted = Column(Integer, default=0)
+    duplicates_skipped = Column(Integer, default=0)
+    error_message = Column(Text, nullable=True)
+    uploaded_at = Column(DateTime, default=func.now())
+    processed_at = Column(DateTime, nullable=True)
+
+class Category(Base):
+    __tablename__ = "categories"
+    category_id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, nullable=True)
+    category_name = Column(String(100), nullable=False)
+    category_group = Column(String(50), default="expense")
+    is_system_default = Column(Boolean, default=False)
+    is_active = Column(Boolean, default=True)
+    display_order = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now())
 
 class Transaction(Base):
     __tablename__ = "transactions"
-    id = Column(Integer, primary_key=True, index=True)
-    date = Column(Date)
-    description = Column(String)
-    original_description = Column(String)
-    amount = Column(Float)
-    currency = Column(String, default="USD")
-    category = Column(String, default="Uncategorized")
+    transaction_id = Column(String, primary_key=True, default=gen_uuid)
+    id = Column(Integer, unique=True, autoincrement=True)
+    user_id = Column(String, nullable=True)
+    account_id = Column(String, nullable=True)
+    uploaded_file_id = Column(String, nullable=True)
+    external_transaction_id = Column(String, nullable=True)
+    raw_date = Column(String, nullable=True)
+    raw_description = Column(String, nullable=True)
+    raw_amount = Column(String, nullable=True)
+    raw_category = Column(String, nullable=True)
+    transaction_date = Column(Date, nullable=True)
+    posted_date = Column(Date, nullable=True)
+    amount = Column(Float, nullable=True)
+    currency_code = Column(String(3), default="USD")
+    currency = Column(String(3), default="USD")
+    description_raw = Column(String(500), nullable=True)
+    description_clean = Column(String(255), nullable=True)
+    description = Column(String, nullable=True)
+    original_description = Column(String, nullable=True)
+    merchant_name = Column(String(255), nullable=True)
+    bank_name_raw = Column(String(255), nullable=True)
     bank_source = Column(String, default="Unknown Bank")
+    account_name = Column(String, nullable=True)
+    transaction_type = Column(String(50), default="unknown")
+    category_id = Column(String, nullable=True)
+    category = Column(String, default="Uncategorized")
+    subcategory = Column(String, nullable=True)
+    notes = Column(String(500), nullable=True)
+    fingerprint = Column(String, unique=True, index=True, nullable=True)
+    fingerprint_hash = Column(String(255), nullable=True)
+    is_duplicate = Column(Boolean, default=False)
+    is_pending = Column(Boolean, default=False)
+    status = Column(String, default="posted")
+    is_user_edited = Column(Boolean, default=False)
     is_edited = Column(Boolean, default=False)
+    review_status = Column(String(30), default="pending_review")
+    needs_review = Column(Boolean, default=False)
+    exclusion_reason = Column(String(100), nullable=True)
+    classification_confidence = Column(String, default="low")
+    classification_source = Column(String, default="auto")
+    import_source = Column(String, nullable=True)
     created_at = Column(DateTime, default=func.now())
+    updated_at = Column(DateTime, default=func.now(), onupdate=func.now())
+
+class TransactionRule(Base):
+    __tablename__ = "transaction_rules"
+    rule_id = Column(String, primary_key=True, default=gen_uuid)
+    user_id = Column(String, nullable=True)
+    match_field = Column(String(50), default="description")
+    match_operator = Column(String(30), default="contains")
+    match_value = Column(String(255), nullable=False)
+    output_transaction_type = Column(String(50), nullable=True)
+    output_category = Column(String, nullable=True)
+    priority = Column(Integer, default=0)
+    active = Column(Boolean, default=True)
+    apply_count = Column(Integer, default=0)
+    created_at = Column(DateTime, default=func.now())
+
+# Legacy alias
+ClassificationRule = TransactionRule
 
 class Goal(Base):
     __tablename__ = "goals"
-    id = Column(Integer, primary_key=True, index=True)
+    id = Column(Integer, primary_key=True)
     title = Column(String)
     target_amount = Column(Float)
     current_amount = Column(Float, default=0)
     currency = Column(String, default="USD")
-    deadline = Column(Date)
+    deadline = Column(Date, nullable=True)
     created_at = Column(DateTime, default=func.now())
 
-class UserProfile(Base):
-    __tablename__ = "user_profile"
-    id = Column(Integer, primary_key=True)
-    monthly_income = Column(Float, default=0)
-    monthly_budget = Column(Float, default=0)
-    savings_goal = Column(Float, default=0)
-    currency = Column(String, default="USD")
-    pay_frequency = Column(String, default="monthly")
-    income_sources = Column(String, default="")
-    created_at = Column(DateTime, default=func.now())
+def seed_default_categories(db):
+    if db.query(Category).filter(Category.is_system_default == True).count() > 0:
+        return
+    defaults = [
+        ("Food & Dining","expense"),("Groceries","expense"),
+        ("Transport","expense"),("Bills & Utilities","expense"),
+        ("Subscriptions","expense"),("Health","expense"),
+        ("Shopping","expense"),("Entertainment","expense"),
+        ("Travel","expense"),("Personal Care","expense"),
+        ("Pets","expense"),("Education","expense"),
+        ("Salary","income"),("Other Income","income"),
+        ("Transfer","transfer"),("Credit Card Payment","transfer"),
+        ("Loan Payment","debt"),("Debt Payment","debt"),
+        ("Refund","refund"),("Other","expense"),
+    ]
+    for i,(name,group) in enumerate(defaults):
+        db.add(Category(
+            category_id=gen_uuid(),
+            category_name=name,
+            category_group=group,
+            is_system_default=True,
+            is_active=True,
+            display_order=i,
+        ))
+    db.commit()

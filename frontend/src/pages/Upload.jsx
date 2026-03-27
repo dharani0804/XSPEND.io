@@ -1,237 +1,451 @@
 import { useState } from 'react'
 
 const CATEGORIES = [
-  'Uncategorized','Food & Dining','Shopping','Transport',
-  'Entertainment','Bills & Utilities','Health','Travel',
-  'Groceries','Salary','Transfer','Other'
+  'Uncategorized','Food & Dining','Groceries','Transport','Bills & Utilities',
+  'Subscriptions','Health','Shopping','Entertainment','Travel',
+  'Personal Care','Pets','Education','Salary','Transfer','Payment','Other'
 ]
-
 const CURRENCIES = ['USD','EUR','GBP','INR','AUD','CAD','SGD','AED','JPY','CHF']
+const TX_TYPES = ['expense','income','transfer','credit_card_payment','loan_payment','refund','excluded']
+
+const EXCLUDED_TYPES = new Set(['credit_card_payment','loan_payment'])
+const EXCLUDED_KEYWORDS = ['payment thank you','autopay payment','online payment','minimum payment']
+
+function isAutoExcluded(tx) {
+  if (EXCLUDED_TYPES.has(tx.transaction_type)) return true
+  const desc = (tx.description || '').toLowerCase()
+  return EXCLUDED_KEYWORDS.some(k => desc.includes(k))
+}
+
+const TYPE_COLORS = {
+  expense:'#c81e1e', income:'#0d9268', transfer:'#8b5cf6',
+  credit_card_payment:'#f59e0b', loan_payment:'#06b6d4',
+  refund:'#10b981', excluded:'#4a4a6a', unknown:'#4a4a6a'
+}
+const TYPE_LABELS = {
+  expense:'Expense', income:'Income', transfer:'Transfer',
+  credit_card_payment:'Card Payment', loan_payment:'Loan Payment',
+  refund:'Refund', excluded:'Excluded', unknown:'Unknown'
+}
+const CONF_COLORS = { high:'#0d9268', medium:'#e3a008', low:'#c81e1e' }
 
 const emptyLine = {
-  date: new Date().toISOString().split('T')[0],
-  description: '',
-  amount: '',
-  currency: 'USD',
-  category: 'Uncategorized',
+  transaction_date: new Date().toISOString().split('T')[0],
+  description:'', amount:'', currency:'USD',
+  category:'Uncategorized', transaction_type:'expense',
 }
+
+const FILE_STATES = { waiting:'waiting', uploading:'uploading', done:'done', error:'error' }
 
 export default function Upload() {
   const [tab, setTab] = useState('upload')
 
-  // Upload state
-  const [file, setFile] = useState(null)
-  const [bankName, setBankName] = useState('')
-  const [uploading, setUploading] = useState(false)
-  const [uploadStatus, setUploadStatus] = useState('')
-  const [uploadedTx, setUploadedTx] = useState([])
+  // Multi-file state
+  const [fileQueue, setFileQueue] = useState([]) // [{file, status, result, bankName}]
   const [drag, setDrag] = useState(false)
+  const [processing, setProcessing] = useState(false)
+  const [allTx, setAllTx] = useState([])
+  const [showExcluded, setShowExcluded] = useState(false)
+  const [editingId, setEditingId] = useState(null)
+  const [editRow, setEditRow] = useState({})
 
-  // Manual state — multiple lines
+  // Manual state
   const [lines, setLines] = useState([{ ...emptyLine, id: Date.now() }])
   const [saving, setSaving] = useState(false)
   const [manualStatus, setManualStatus] = useState('')
   const [savedTx, setSavedTx] = useState([])
   const [manualBank, setManualBank] = useState('')
 
-  // Edit state
-  const [editingId, setEditingId] = useState(null)
-  const [editRow, setEditRow] = useState({})
+  const addLine = () => setLines(p => [...p, { ...emptyLine, id: Date.now() }])
+  const updateLine = (id, f, v) => setLines(p => p.map(l => l.id === id ? {...l,[f]:v} : l))
+  const removeLine = (id) => { if (lines.length > 1) setLines(p => p.filter(l => l.id !== id)) }
 
-  const addLine = () => setLines(prev => [...prev, { ...emptyLine, id: Date.now() }])
-
-  const updateLine = (id, field, value) => {
-    setLines(prev => prev.map(l => l.id === id ? { ...l, [field]: value } : l))
+  const addFiles = (newFiles) => {
+    const entries = Array.from(newFiles).map(file => ({
+      id: Date.now() + Math.random(),
+      file,
+      status: FILE_STATES.waiting,
+      bankName: '',
+      result: null,
+      error: null,
+    }))
+    setFileQueue(p => [...p, ...entries])
   }
 
-  const removeLine = (id) => {
-    if (lines.length === 1) return
-    setLines(prev => prev.filter(l => l.id !== id))
+  const removeFile = (id) => setFileQueue(p => p.filter(f => f.id !== id))
+
+  const updateFileBank = (id, bankName) => {
+    setFileQueue(p => p.map(f => f.id === id ? {...f, bankName} : f))
   }
 
-  const handleUpload = async () => {
-    if (!file) return
-    setUploading(true)
-    setUploadStatus('')
-    const formData = new FormData()
-    formData.append('file', file)
-    const bank = bankName.trim() || 'Unknown Bank'
+  const uploadSingle = async (entry) => {
+    setFileQueue(p => p.map(f => f.id === entry.id ? {...f, status:FILE_STATES.uploading} : f))
+    const fd = new FormData()
+    fd.append('file', entry.file)
+    const bank = entry.bankName.trim()
+    const url = bank
+      ? `http://127.0.0.1:8000/upload?bank_name=${encodeURIComponent(bank)}`
+      : 'http://127.0.0.1:8000/upload'
     try {
-      const res = await fetch(`http://127.0.0.1:8000/upload?bank_name=${encodeURIComponent(bank)}`, {
-        method: 'POST', body: formData
-      })
+      const res = await fetch(url, { method:'POST', body:fd })
       const data = await res.json()
       if (data.success) {
-        setUploadStatus(`✓ ${data.transactions_imported} transactions imported from ${bank}`)
-        setUploadedTx(data.transactions)
-        setFile(null)
-        setBankName('')
+        setFileQueue(p => p.map(f => f.id === entry.id ? {...f, status:FILE_STATES.done, result:data} : f))
+        return data.transactions || []
       } else {
-        setUploadStatus(`✗ ${data.error}`)
+        setFileQueue(p => p.map(f => f.id === entry.id ? {...f, status:FILE_STATES.error, error:data.error} : f))
+        return []
       }
-    } catch {
-      setUploadStatus('✗ Could not connect to backend')
-    } finally {
-      setUploading(false)
+    } catch(e) {
+      setFileQueue(p => p.map(f => f.id === entry.id ? {...f, status:FILE_STATES.error, error:'Connection failed'} : f))
+      return []
     }
+  }
+
+  const uploadAll = async () => {
+    const waiting = fileQueue.filter(f => f.status === FILE_STATES.waiting)
+    if (!waiting.length) return
+    setProcessing(true)
+    setAllTx([])
+
+    // Upload sequentially to avoid overwhelming the backend
+    for (const entry of waiting) {
+      await uploadSingle(entry)
+    }
+
+    // Fetch all transactions after all uploads complete
+    try {
+      const res = await fetch('http://127.0.0.1:8000/transactions')
+      const data = await res.json()
+      const enriched = data.map(t => ({ ...t, excluded: isAutoExcluded(t) }))
+      setAllTx(enriched)
+    } catch {}
+
+    setProcessing(false)
+  }
+
+  const startEdit = (tx) => {
+    setEditingId(tx.id)
+    setEditRow({
+      transaction_date: tx.transaction_date || tx.date || '',
+      description: tx.description || '',
+      amount: tx.amount || '',
+      currency: tx.currency || 'USD',
+      category: tx.category || 'Uncategorized',
+      transaction_type: tx.transaction_type || 'expense',
+      bank_source: tx.bank_source || '',
+      notes: tx.notes || '',
+    })
+  }
+
+  const cancelEdit = () => setEditingId(null)
+
+  const saveEdit = async (id) => {
+    try {
+      await fetch(`http://127.0.0.1:8000/transactions/${id}`, {
+        method:'PATCH', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({
+          transaction_date: editRow.transaction_date,
+          description: editRow.description,
+          amount: parseFloat(editRow.amount),
+          currency: editRow.currency,
+          category: editRow.category,
+          transaction_type: editRow.transaction_type,
+          bank_source: editRow.bank_source,
+          notes: editRow.notes,
+        })
+      })
+      setAllTx(p => p.map(t => t.id === id ? {...t, ...editRow} : t))
+      setSavedTx(p => p.map(t => t.id === id ? {...t, ...editRow} : t))
+    } catch {}
+    setEditingId(null)
+  }
+
+  const toggleExclude = (id) => {
+    setAllTx(p => p.map(t => t.id === id ? {...t, excluded: !t.excluded} : t))
   }
 
   const handleSaveAll = async () => {
-    const valid = lines.filter(l => l.description.trim() && l.amount && l.date)
-    if (valid.length === 0) {
-      setManualStatus('✗ Fill in at least one complete row')
-      return
-    }
+    const valid = lines.filter(l => l.description.trim() && l.amount && l.transaction_date)
+    if (!valid.length) { setManualStatus('Fill in at least one complete row'); return }
     setSaving(true)
     setManualStatus('')
     const results = []
     for (const line of valid) {
       try {
         const res = await fetch('http://127.0.0.1:8000/transactions/manual', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            date: line.date,
-            description: line.description,
-            amount: parseFloat(line.amount),
-            currency: line.currency,
-            category: line.category,
-            bank_source: manualBank.trim() || 'Manual Entry',
-          })
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({ ...line, amount: parseFloat(line.amount), bank_source: manualBank||'Manual Entry' })
         })
-        const data = await res.json()
-        if (data.success) results.push(data.transaction)
+        const d = await res.json()
+        if (d.success) results.push(d.transaction)
       } catch {}
     }
     setSaving(false)
-    if (results.length > 0) {
-      setManualStatus(`✓ ${results.length} transaction${results.length > 1 ? 's' : ''} saved!`)
-      setSavedTx(prev => [...results, ...prev])
+    if (results.length) {
+      setManualStatus(`✓ ${results.length} transaction${results.length>1?'s':''} saved`)
+      setSavedTx(p => [...results, ...p])
       setLines([{ ...emptyLine, id: Date.now() }])
       setManualBank('')
     } else {
-      setManualStatus('✗ Failed to save. Check your backend.')
+      setManualStatus('Failed to save.')
     }
   }
 
-  const startEdit = (tx) => { setEditingId(tx.id); setEditRow({ ...tx }) }
-  const cancelEdit = () => setEditingId(null)
+  const included = allTx.filter(t => !t.excluded)
+  const excluded = allTx.filter(t => t.excluded)
+  const displayList = showExcluded ? allTx : included
 
-  const saveEdit = async (id) => {
-    try {
-      await fetch(`http://127.0.0.1:8000/transactions/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(editRow)
-      })
-      setSavedTx(prev => prev.map(t => t.id === id ? { ...t, ...editRow } : t))
-      setUploadedTx(prev => prev.map(t => t.id === id ? { ...t, ...editRow } : t))
-    } catch {}
-    setEditingId(null)
-  }
+  const totalImported = fileQueue.reduce((s,f) => s + (f.result?.transactions_imported || 0), 0)
+  const totalSkipped = fileQueue.reduce((s,f) => s + (f.result?.skipped_duplicates || 0), 0)
+  const waitingCount = fileQueue.filter(f => f.status === FILE_STATES.waiting).length
 
   const S = {
-    page: { padding: '40px 56px', maxWidth: 1100, margin: '0 auto', fontFamily: 'Inter, sans-serif' },
-    title: { fontSize: 24, fontWeight: 800, color: '#fff', marginBottom: 6, letterSpacing: '-0.5px' },
-    subtitle: { color: '#6a6a8a', fontSize: 14, marginBottom: 32 },
-    tabs: { display: 'flex', gap: 4, background: '#12121e', border: '1px solid #1e1e2e', borderRadius: 14, padding: 4, marginBottom: 28, width: 'fit-content' },
-    tab: (a) => ({ padding: '10px 28px', borderRadius: 10, fontSize: 14, fontWeight: 600, cursor: 'pointer', border: 'none', background: a ? '#2563eb' : 'transparent', color: a ? '#fff' : '#6a6a8a', boxShadow: a ? '0 2px 12px rgba(37,99,235,0.3)' : 'none' }),
-    card: { background: '#12121e', border: '1px solid #1e1e2e', borderRadius: 20, padding: 32 },
-    label: { display: 'block', color: '#8888aa', fontSize: 11, fontWeight: 600, letterSpacing: 1, textTransform: 'uppercase', marginBottom: 7 },
-    input: { width: '100%', background: '#0a0a0f', border: '1px solid #2a2a3a', borderRadius: 10, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none', boxSizing: 'border-box' },
-    select: { width: '100%', background: '#0a0a0f', border: '1px solid #2a2a3a', borderRadius: 10, padding: '10px 14px', color: '#fff', fontSize: 14, outline: 'none', boxSizing: 'border-box' },
-    dropzone: (d) => ({ background: d ? 'rgba(37,99,235,0.06)' : '#0a0a0f', border: `2px dashed ${d ? '#3b82f6' : '#2a2a3a'}`, borderRadius: 16, padding: '52px 32px', textAlign: 'center', cursor: 'pointer', transition: 'all 0.2s', marginBottom: 20 }),
-    btn: { background: '#2563eb', color: '#fff', border: 'none', borderRadius: 12, padding: '12px 28px', fontSize: 14, fontWeight: 700, cursor: 'pointer' },
-    btnSm: { background: '#1e1e2e', color: '#8888aa', border: '1px solid #2a2a3a', borderRadius: 8, padding: '6px 14px', fontSize: 12, fontWeight: 600, cursor: 'pointer' },
-    btnDanger: { background: 'none', color: '#4a4a6a', border: '1px solid #2a2a3a', borderRadius: 8, padding: '6px 10px', fontSize: 13, cursor: 'pointer' },
-    status: (ok) => ({ marginTop: 14, fontSize: 13, fontWeight: 600, color: ok ? '#10b981' : '#ef4444' }),
-    th: { padding: '11px 14px', background: '#0a0a0f', color: '#4a4a6a', fontSize: 11, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 1, textAlign: 'left', borderBottom: '1px solid #1e1e2e' },
-    td: { padding: '11px 14px', color: '#c0c0d8', fontSize: 13, borderBottom: '1px solid #1a1a2a', verticalAlign: 'middle' },
-    editInput: { background: '#0a0a0f', border: '1px solid #3b82f6', borderRadius: 6, padding: '5px 8px', color: '#fff', fontSize: 12, width: '100%', outline: 'none' },
-    editSelect: { background: '#0a0a0f', border: '1px solid #3b82f6', borderRadius: 6, padding: '5px 8px', color: '#fff', fontSize: 12, width: '100%', outline: 'none' },
+    page: { padding:'32px 48px', maxWidth:1300, margin:'0 auto', fontFamily:'DM Sans, Inter, sans-serif', background:'#0a0a0f', minHeight:'100vh' },
+    tabs: { display:'flex', gap:4, background:'#12121e', border:'1px solid #1e1e2e', borderRadius:14, padding:4, marginBottom:24, width:'fit-content' },
+    tab: (a) => ({ padding:'9px 24px', borderRadius:10, fontSize:14, fontWeight:500, cursor:'pointer', border:'none', background:a?'#2563eb':'transparent', color:a?'#fff':'#6a6a8a', fontFamily:'inherit' }),
+    card: { background:'#12121e', border:'1px solid #1e1e2e', borderRadius:18, padding:28 },
+    label: { display:'block', color:'#6a6a8a', fontSize:11, fontWeight:600, letterSpacing:1.5, textTransform:'uppercase', marginBottom:8 },
+    input: { width:'100%', background:'#0a0a0f', border:'1px solid #2a2a3a', borderRadius:10, padding:'11px 14px', color:'#fff', fontSize:14, outline:'none', boxSizing:'border-box', fontFamily:'inherit' },
+    select: { width:'100%', background:'#0a0a0f', border:'1px solid #2a2a3a', borderRadius:10, padding:'11px 14px', color:'#fff', fontSize:14, outline:'none', boxSizing:'border-box', fontFamily:'inherit' },
+    dropzone: (d) => ({ background:d?'rgba(37,99,235,0.06)':'#0a0a0f', border:`2px dashed ${d?'#2563eb':'#2a2a3a'}`, borderRadius:14, padding:'40px 32px', textAlign:'center', cursor:'pointer', transition:'all 0.2s', marginBottom:16 }),
+    btn: { background:'#2563eb', color:'#fff', border:'none', borderRadius:12, padding:'12px 28px', fontSize:14, fontWeight:600, cursor:'pointer', fontFamily:'inherit' },
+    btnSm: (color) => ({ background:'none', border:`1px solid ${color||'#2a2a3a'}`, borderRadius:7, padding:'4px 10px', fontSize:11, fontWeight:500, cursor:'pointer', fontFamily:'inherit', color:color||'#8888aa' }),
+    editInput: { background:'#0a0a0f', border:'1px solid #3b82f6', borderRadius:6, padding:'5px 8px', color:'#fff', fontSize:12, outline:'none', fontFamily:'inherit', width:'100%' },
+    editSelect: { background:'#0a0a0f', border:'1px solid #3b82f6', borderRadius:6, padding:'5px 8px', color:'#fff', fontSize:12, outline:'none', fontFamily:'inherit', width:'100%' },
+    th: { padding:'9px 12px', color:'#4a4a6a', fontSize:10, fontWeight:600, textTransform:'uppercase', letterSpacing:1, whiteSpace:'nowrap' },
+    td: { padding:'10px 12px', borderBottom:'1px solid #1a1a2a', verticalAlign:'middle' },
   }
 
-  const renderRow = (tx) => {
-    const isEditing = editingId === tx.id
-    return (
-      <tr key={tx.id}>
-        <td style={S.td}>{isEditing ? <input style={S.editInput} value={editRow.date||''} onChange={e=>setEditRow({...editRow,date:e.target.value})}/> : <span style={{color:'#6a6a8a'}}>{tx.date}</span>}</td>
-        <td style={S.td}>{isEditing ? <input style={S.editInput} value={editRow.description||''} onChange={e=>setEditRow({...editRow,description:e.target.value})}/> : tx.description}</td>
-        <td style={{...S.td,textAlign:'right'}}>{isEditing ? <input style={{...S.editInput,width:80}} value={editRow.amount||''} onChange={e=>setEditRow({...editRow,amount:e.target.value})}/> : <span style={{color:parseFloat(tx.amount)>=0?'#10b981':'#ef4444',fontWeight:600}}>{parseFloat(tx.amount)>=0?'+':'-'}${Math.abs(parseFloat(tx.amount)).toFixed(2)}</span>}</td>
-        <td style={S.td}>{isEditing ? <select style={S.editSelect} value={editRow.currency||'USD'} onChange={e=>setEditRow({...editRow,currency:e.target.value})}>{CURRENCIES.map(c=><option key={c}>{c}</option>)}</select> : tx.currency}</td>
-        <td style={S.td}>{isEditing ? <select style={S.editSelect} value={editRow.category||'Uncategorized'} onChange={e=>setEditRow({...editRow,category:e.target.value})}>{CATEGORIES.map(c=><option key={c}>{c}</option>)}</select> : <span style={{background:'#1e1e2e',color:'#8888aa',fontSize:11,padding:'3px 10px',borderRadius:6}}>{tx.category}</span>}</td>
-        <td style={S.td}>{isEditing ? <input style={S.editInput} value={editRow.bank_source||''} onChange={e=>setEditRow({...editRow,bank_source:e.target.value})}/> : <span style={{color:'#4a4a6a',fontSize:12}}>{tx.bank_source}</span>}</td>
-        <td style={S.td}>
-          {isEditing
-            ? <div style={{display:'flex',gap:6}}>
-                <button onClick={()=>saveEdit(tx.id)} style={{...S.btnSm,background:'#10b981',color:'#fff',border:'none'}}>Save</button>
-                <button onClick={cancelEdit} style={S.btnSm}>✕</button>
-              </div>
-            : <button onClick={()=>startEdit(tx)} style={S.btnSm}>Edit</button>
-          }
-        </td>
-      </tr>
-    )
-  }
+  const statusIcon = { waiting:'⏳', uploading:'🔄', done:'✓', error:'✗' }
+  const statusColor = { waiting:'#6a6a8a', uploading:'#3b82f6', done:'#0d9268', error:'#c81e1e' }
 
   return (
     <div style={S.page}>
-      <h1 style={S.title}>Add Transactions</h1>
-      <p style={S.subtitle}>Upload a bank statement or enter transactions line by line — all fields editable after saving</p>
+      <div style={{ marginBottom:24 }}>
+        <h1 style={{ fontSize:22, fontWeight:600, color:'#fff', marginBottom:4 }}>Add Transactions</h1>
+        <p style={{ color:'#6a6a8a', fontSize:13 }}>Upload one or more files, or enter transactions manually</p>
+      </div>
 
-      {/* TABS */}
       <div style={S.tabs}>
-        <button style={S.tab(tab==='upload')} onClick={()=>setTab('upload')}>📎 Upload Statement</button>
-        <button style={S.tab(tab==='manual')} onClick={()=>setTab('manual')}>✏️ Enter Manually</button>
+        <button style={S.tab(tab==='upload')} onClick={() => setTab('upload')}>📎 Upload Files</button>
+        <button style={S.tab(tab==='manual')} onClick={() => setTab('manual')}>✏️ Enter Manually</button>
       </div>
 
       {/* ── UPLOAD TAB ── */}
       {tab === 'upload' && (
         <div style={S.card}>
-          <p style={{color:'#8888aa',fontSize:13,marginBottom:24}}>Supports bank statements, CSV files and transaction documents. Your file is never stored — only transaction data is saved.</p>
+          <p style={{ color:'#6a6a8a', fontSize:13, marginBottom:20 }}>
+            Upload multiple files at once — CSV, PDF, XLSX or XLS. Mix different banks and formats in the same session. Bank names are auto-detected.
+          </p>
 
           {/* Dropzone */}
           <div
             style={S.dropzone(drag)}
-            onDragOver={e=>{e.preventDefault();setDrag(true)}}
-            onDragLeave={()=>setDrag(false)}
-            onDrop={e=>{e.preventDefault();setDrag(false);setFile(e.dataTransfer.files[0])}}
-            onClick={()=>document.getElementById('fileInput').click()}
+            onDragOver={e => { e.preventDefault(); setDrag(true) }}
+            onDragLeave={() => setDrag(false)}
+            onDrop={e => { e.preventDefault(); setDrag(false); addFiles(e.dataTransfer.files) }}
+            onClick={() => document.getElementById('multiFileInput').click()}
           >
-            <div style={{fontSize:40,marginBottom:12}}>📎</div>
-            <p style={{color:file?'#fff':'#8888aa',fontWeight:700,fontSize:16,marginBottom:6}}>
-              {file ? file.name : 'Drop your file here'}
+            <div style={{ fontSize:36, marginBottom:12 }}>📎</div>
+            <p style={{ color:'#fff', fontWeight:600, fontSize:15, marginBottom:6 }}>
+              Drop files here or click to browse
             </p>
-            <p style={{color:'#4a4a6a',fontSize:13}}>
-              {file ? `${(file.size/1024).toFixed(1)} KB · Ready to import` : 'CSV · PDF · XLS · click to browse'}
+            <p style={{ color:'#4a4a6a', fontSize:12, marginBottom:8 }}>
+              CSV · PDF · XLSX · XLS · OFX · QFX · multiple files supported
             </p>
-            <input id="fileInput" type="file" accept=".pdf,.csv,.xlsx,.xls,.doc,.docx" style={{display:'none'}} onChange={e=>setFile(e.target.files[0])}/>
+            <p style={{ color:'#2563eb', fontSize:11, fontWeight:500 }}>
+              All formats supported · upload any bank statement
+            </p>
+            <input
+              id="multiFileInput"
+              type="file"
+              accept=".pdf,.csv,.xlsx,.xls"
+              multiple
+              style={{ display:'none' }}
+              onChange={e => addFiles(e.target.files)}
+            />
           </div>
 
-          {/* Bank name */}
-          <div style={{marginBottom:20}}>
-            <label style={S.label}>Bank / Account Name <span style={{color:'#4a4a6a',textTransform:'none',letterSpacing:0}}>(optional)</span></label>
-            <input style={S.input} placeholder="e.g. Chase, HDFC, Barclays, Revolut..." value={bankName} onChange={e=>setBankName(e.target.value)}/>
-          </div>
-
-          <button onClick={handleUpload} disabled={!file||uploading} style={{...S.btn,opacity:(!file||uploading)?0.4:1,width:'100%'}}>
-            {uploading ? '⏳ Parsing statement...' : '↑ Upload & Import'}
-          </button>
-
-          {uploadStatus && <p style={S.status(uploadStatus.startsWith('✓'))}>{uploadStatus}</p>}
-
-          {/* Uploaded results table */}
-          {uploadedTx.length > 0 && (
-            <div style={{marginTop:28,borderRadius:16,overflow:'hidden',border:'1px solid #1e1e2e'}}>
-              <div style={{padding:'14px 16px',borderBottom:'1px solid #1e1e2e',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#0a0a0f'}}>
-                <p style={{color:'#fff',fontWeight:700,fontSize:14}}>Imported — {uploadedTx.length} transactions</p>
-                <span style={{color:'#4a4a6a',fontSize:12}}>Click Edit to modify any field</span>
+          {/* File queue */}
+          {fileQueue.length > 0 && (
+            <div style={{ marginBottom:20 }}>
+              <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:10 }}>
+                <p style={{ color:'#8888aa', fontSize:12, fontWeight:500 }}>
+                  {fileQueue.length} file{fileQueue.length>1?'s':''} queued
+                </p>
+                {waitingCount > 0 && !processing && (
+                  <button onClick={uploadAll} style={S.btn}>
+                    ↑ Upload {waitingCount} file{waitingCount>1?'s':''}
+                  </button>
+                )}
+                {processing && (
+                  <span style={{ color:'#3b82f6', fontSize:13, fontWeight:500 }}>⏳ Processing...</span>
+                )}
               </div>
-              <div style={{overflowX:'auto'}}>
-                <table style={{width:'100%',borderCollapse:'collapse'}}>
-                  <thead><tr>{['Date','Description','Amount','Currency','Category','Bank',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-                  <tbody>{uploadedTx.map(tx=>renderRow(tx))}</tbody>
+
+              <div style={{ display:'flex', flexDirection:'column', gap:8 }}>
+                {fileQueue.map(entry => (
+                  <div key={entry.id} style={{ background:'#0a0a0f', border:'1px solid #1e1e2e', borderRadius:10, padding:'12px 16px', display:'flex', alignItems:'center', gap:12, flexWrap:'wrap' }}>
+
+                    {/* Status icon */}
+                    <span style={{ fontSize:16, color:statusColor[entry.status], flexShrink:0 }}>
+                      {entry.status === 'uploading' ? '🔄' : statusIcon[entry.status]}
+                    </span>
+
+                    {/* File info */}
+                    <div style={{ flex:1, minWidth:160 }}>
+                      <p style={{ color:'#fff', fontSize:13, fontWeight:500, marginBottom:2 }}>{entry.file.name}</p>
+                      <p style={{ color:'#4a4a6a', fontSize:11 }}>
+                        {(entry.file.size/1024).toFixed(1)} KB · {entry.file.name.split('.').pop().toUpperCase()}
+                        {entry.result && <span style={{ color:'#0d9268', marginLeft:8 }}>✓ {entry.result.transactions_imported} imported{entry.result.skipped_duplicates>0?`, ${entry.result.skipped_duplicates} skipped`:''}</span>}
+                        {entry.result?.bank_source && entry.result.bank_source !== 'Unknown Bank' && <span style={{ color:'#8888aa', marginLeft:8 }}>🏦 {entry.result.bank_source}</span>}
+                        {entry.error && <span style={{ color:'#c81e1e', marginLeft:8 }}>✗ {entry.error}</span>}
+                      </p>
+                    </div>
+
+                    {/* Bank name override */}
+                    {entry.status === FILE_STATES.waiting && (
+                      <input
+                        style={{ ...S.input, width:180, padding:'7px 10px', fontSize:12 }}
+                        placeholder="Bank (auto-detected)"
+                        value={entry.bankName}
+                        onChange={e => updateFileBank(entry.id, e.target.value)}
+                      />
+                    )}
+
+                    {/* Progress bar for uploading */}
+                    {entry.status === FILE_STATES.uploading && (
+                      <div style={{ width:120, height:4, background:'#1e1e2e', borderRadius:99, overflow:'hidden' }}>
+                        <div style={{ height:'100%', background:'#3b82f6', width:'60%', animation:'pulse 1s infinite', borderRadius:99 }}/>
+                      </div>
+                    )}
+
+                    {/* Remove button */}
+                    {entry.status === FILE_STATES.waiting && (
+                      <button onClick={() => removeFile(entry.id)} style={{ background:'none', border:'none', color:'#4a4a6a', fontSize:16, cursor:'pointer', padding:'0 4px' }}>✕</button>
+                    )}
+                  </div>
+                ))}
+              </div>
+
+              {/* Summary after all done */}
+              {fileQueue.some(f => f.status === FILE_STATES.done) && !processing && (
+                <div style={{ marginTop:12, background:'#0a0a0f', border:'1px solid #1e1e2e', borderRadius:10, padding:'10px 16px', display:'flex', gap:20, flexWrap:'wrap' }}>
+                  <span style={{ color:'#0d9268', fontSize:13, fontWeight:600 }}>✓ {totalImported} transactions imported</span>
+                  {totalSkipped > 0 && <span style={{ color:'#6a6a8a', fontSize:12 }}>{totalSkipped} duplicates skipped</span>}
+                  <span style={{ color:'#6a6a8a', fontSize:12 }}>across {fileQueue.filter(f=>f.status===FILE_STATES.done).length} file{fileQueue.filter(f=>f.status===FILE_STATES.done).length>1?'s':''}</span>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Transaction review table */}
+          {allTx.length > 0 && (
+            <div style={{ marginTop:24, borderRadius:14, overflow:'hidden', border:'1px solid #1e1e2e' }}>
+
+              <div style={{ padding:'12px 16px', borderBottom:'1px solid #1e1e2e', display:'flex', justifyContent:'space-between', alignItems:'center', background:'#0a0a0f', flexWrap:'wrap', gap:10 }}>
+                <div style={{ display:'flex', alignItems:'center', gap:10, flexWrap:'wrap' }}>
+                  <p style={{ color:'#fff', fontWeight:600, fontSize:13 }}>All transactions — {allTx.length} total</p>
+                  <span style={{ color:'#0d9268', fontSize:11, background:'rgba(13,146,104,0.1)', padding:'2px 8px', borderRadius:5 }}>✓ {included.length} in spending</span>
+                  {excluded.length > 0 && <span style={{ color:'#6a6a8a', fontSize:11, background:'#1e1e2e', padding:'2px 8px', borderRadius:5 }}>{excluded.length} excluded</span>}
+                </div>
+                <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                  <span style={{ color:'#4a4a6a', fontSize:11 }}>Show excluded</span>
+                  <div onClick={() => setShowExcluded(s => !s)}
+                    style={{ width:36, height:20, borderRadius:99, cursor:'pointer', background:showExcluded?'#2563eb':'#2a2a3a', position:'relative', transition:'background 0.2s' }}>
+                    <span style={{ position:'absolute', top:2, left:showExcluded?18:2, width:16, height:16, borderRadius:'50%', background:'#fff', transition:'left 0.2s', display:'block' }}/>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ overflowX:'auto' }}>
+                <table style={{ width:'100%', borderCollapse:'collapse', minWidth:860 }}>
+                  <thead>
+                    <tr style={{ background:'#0a0a0f', borderBottom:'1px solid #1e1e2e' }}>
+                      {['Date','Description','Amount','Category','Type','Conf','Notes',''].map((h,i) => (
+                        <th key={i} style={{ ...S.th, textAlign:i===2?'right':'left' }}>{h}</th>
+                      ))}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayList.map(tx => {
+                      const isEditing = editingId !== null && editingId === tx.id
+                      const excl = tx.excluded
+                      const date = tx.transaction_date || tx.date || ''
+                      const txType = tx.transaction_type || 'expense'
+                      const conf = tx.classification_confidence || 'medium'
+
+                      return (
+                        <tr key={tx.id} style={{ borderBottom:'1px solid #1a1a2a', background:excl?'rgba(255,255,255,0.01)':'transparent', opacity:excl?0.55:1 }}>
+                          <td style={S.td}>
+                            {isEditing
+                              ? <input type="date" style={{...S.editInput,width:120}} value={editRow.transaction_date} onChange={e=>setEditRow({...editRow,transaction_date:e.target.value})}/>
+                              : <span style={{ color:'#6a6a8a', fontSize:12 }}>{date}</span>}
+                          </td>
+                          <td style={{...S.td, maxWidth:240}}>
+                            {isEditing
+                              ? <input style={S.editInput} value={editRow.description} onChange={e=>setEditRow({...editRow,description:e.target.value})}/>
+                              : <div>
+                                  <span style={{ color:excl?'#6a6a8a':'#fff', fontSize:13 }}>{tx.description}</span>
+                                  {excl && <span style={{ marginLeft:7, fontSize:10, color:'#4a4a6a', background:'#1e1e2e', padding:'1px 6px', borderRadius:4 }}>excluded</span>}
+                                  {tx.needs_review && !excl && <span style={{ marginLeft:6, fontSize:10, color:'#e3a008', background:'rgba(227,160,8,0.1)', padding:'1px 5px', borderRadius:3 }}>review</span>}
+                                </div>}
+                          </td>
+                          <td style={{...S.td, textAlign:'right'}}>
+                            {isEditing
+                              ? <input type="number" style={{...S.editInput,width:90,textAlign:'right'}} value={editRow.amount} onChange={e=>setEditRow({...editRow,amount:e.target.value})}/>
+                              : <span style={{ color:excl?'#4a4a6a':parseFloat(tx.amount)>=0?'#0d9268':'#c81e1e', fontWeight:600, fontSize:13, fontFamily:'monospace' }}>
+                                  {parseFloat(tx.amount)>=0?'+':'-'}${Math.abs(parseFloat(tx.amount||0)).toFixed(2)}
+                                </span>}
+                          </td>
+                          <td style={S.td}>
+                            {isEditing
+                              ? <select style={{...S.editSelect,width:140}} value={editRow.category} onChange={e=>setEditRow({...editRow,category:e.target.value})}>
+                                  {CATEGORIES.map(c=><option key={c}>{c}</option>)}
+                                </select>
+                              : <span style={{ background:'#1e1e2e', color:excl?'#4a4a6a':'#8888aa', fontSize:11, padding:'3px 9px', borderRadius:5 }}>{tx.category}</span>}
+                          </td>
+                          <td style={S.td}>
+                            {isEditing
+                              ? <select style={{...S.editSelect,width:130}} value={editRow.transaction_type} onChange={e=>setEditRow({...editRow,transaction_type:e.target.value})}>
+                                  {TX_TYPES.map(t=><option key={t}>{t}</option>)}
+                                </select>
+                              : <span style={{ fontSize:11, color:excl?'#4a4a6a':TYPE_COLORS[txType], background:`${TYPE_COLORS[txType]}15`, padding:'3px 8px', borderRadius:4 }}>
+                                  {excl?'Excluded':TYPE_LABELS[txType]||txType}
+                                </span>}
+                          </td>
+                          <td style={S.td}>
+                            <span style={{ fontSize:11, color:CONF_COLORS[conf]||'#6a6a8a' }}>● {conf}</span>
+                          </td>
+                          <td style={{...S.td, minWidth:120}}>
+                            {isEditing
+                              ? <input style={S.editInput} placeholder="Note..." value={editRow.notes||''} onChange={e=>setEditRow({...editRow,notes:e.target.value})}/>
+                              : <span style={{ color:'#4a4a6a', fontSize:11 }}>{tx.notes||'—'}</span>}
+                          </td>
+                          <td style={{...S.td, whiteSpace:'nowrap'}}>
+                            {isEditing
+                              ? <div style={{ display:'flex', gap:5 }}>
+                                  <button onClick={()=>saveEdit(tx.id)} style={{ background:'#0d9268', color:'#fff', border:'none', borderRadius:7, padding:'5px 12px', fontSize:11, cursor:'pointer', fontWeight:600, fontFamily:'inherit' }}>Save</button>
+                                  <button onClick={cancelEdit} style={S.btnSm()}>✕</button>
+                                </div>
+                              : <div style={{ display:'flex', gap:5 }}>
+                                  <button onClick={()=>startEdit(tx)} style={S.btnSm('#4a4a6a')}>Edit</button>
+                                  <button onClick={()=>toggleExclude(tx.id)} style={S.btnSm(excl?'#0d9268':'#6a6a8a')}>
+                                    {excl?'Include':'Exclude'}
+                                  </button>
+                                </div>}
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
                 </table>
+              </div>
+
+              <div style={{ padding:'10px 16px', borderTop:'1px solid #1e1e2e', background:'#0a0a0f', display:'flex', justifyContent:'space-between' }}>
+                <p style={{ color:'#4a4a6a', fontSize:11 }}>Payroll, Zelle, Venmo, wire and card payments excluded by default · always editable</p>
+                <p style={{ color:'#4a4a6a', fontSize:11 }}>{included.length} in spending · {excluded.length} excluded</p>
               </div>
             </div>
           )}
@@ -241,105 +455,65 @@ export default function Upload() {
       {/* ── MANUAL TAB ── */}
       {tab === 'manual' && (
         <div style={S.card}>
-          <p style={{color:'#8888aa',fontSize:13,marginBottom:24}}>Add transactions one line at a time. Click <strong style={{color:'#fff'}}>+ Add Row</strong> for more entries. Save all at once when ready.</p>
+          <p style={{ color:'#6a6a8a', fontSize:13, marginBottom:20 }}>
+            Add transactions line by line. Click <strong style={{ color:'#fff' }}>+ Add Row</strong> for more entries.
+          </p>
 
-          {/* Bank name for manual */}
-          <div style={{marginBottom:20,maxWidth:320}}>
-            <label style={S.label}>Bank / Account Name <span style={{color:'#4a4a6a',textTransform:'none',letterSpacing:0}}>(optional)</span></label>
-            <input style={S.input} placeholder="e.g. Chase, HDFC, Revolut..." value={manualBank} onChange={e=>setManualBank(e.target.value)}/>
+          <div style={{ marginBottom:16, maxWidth:320 }}>
+            <label style={S.label}>Bank / Account <span style={{ textTransform:'none', letterSpacing:0, fontWeight:400, color:'#4a4a6a' }}>(optional)</span></label>
+            <input style={S.input} placeholder="e.g. Chase, HDFC..." value={manualBank} onChange={e=>setManualBank(e.target.value)}/>
           </div>
 
-          {/* Line by line entry table */}
-          <div style={{borderRadius:14,overflow:'hidden',border:'1px solid #1e1e2e',marginBottom:16}}>
-            {/* Header */}
-            <div style={{display:'grid',gridTemplateColumns:'130px 1fr 120px 90px 170px 36px',gap:0,background:'#0a0a0f',borderBottom:'1px solid #1e1e2e'}}>
-              {['Date','Description / Merchant','Amount','Currency','Category',''].map((h,i)=>(
-                <div key={i} style={{padding:'10px 14px',color:'#4a4a6a',fontSize:11,fontWeight:600,textTransform:'uppercase',letterSpacing:1}}>{h}</div>
+          <div style={{ borderRadius:12, overflow:'hidden', border:'1px solid #1e1e2e', marginBottom:14 }}>
+            <div style={{ display:'grid', gridTemplateColumns:'130px 1fr 110px 80px 160px 130px 28px', background:'#0a0a0f', borderBottom:'1px solid #1e1e2e' }}>
+              {['Date','Description','Amount','Currency','Category','Type',''].map((h,i) => (
+                <div key={i} style={{ padding:'9px 12px', color:'#4a4a6a', fontSize:10, fontWeight:600, textTransform:'uppercase', letterSpacing:1 }}>{h}</div>
               ))}
             </div>
-
-            {/* Lines */}
             {lines.map((line, idx) => (
-              <div key={line.id} style={{display:'grid',gridTemplateColumns:'130px 1fr 120px 90px 170px 36px',gap:0,borderBottom:'1px solid #1a1a2a',background: idx%2===0?'#12121e':'#0f0f1a',alignItems:'center'}}>
-                <div style={{padding:'8px 10px'}}>
-                  <input
-                    type="date"
-                    style={{...S.input,padding:'7px 10px',fontSize:12}}
-                    value={line.date}
-                    onChange={e=>updateLine(line.id,'date',e.target.value)}
-                  />
+              <div key={line.id} style={{ display:'grid', gridTemplateColumns:'130px 1fr 110px 80px 160px 130px 28px', borderBottom:'1px solid #1a1a2a', background:idx%2===0?'#12121e':'#0f0f1a', alignItems:'center' }}>
+                <div style={{ padding:'7px 10px' }}>
+                  <input type="date" style={{...S.input,padding:'6px 8px',fontSize:11}} value={line.transaction_date} onChange={e=>updateLine(line.id,'transaction_date',e.target.value)}/>
                 </div>
-                <div style={{padding:'8px 10px'}}>
-                  <input
-                    style={{...S.input,padding:'7px 10px',fontSize:13}}
-                    placeholder="e.g. Starbucks, Netflix, Salary..."
-                    value={line.description}
-                    onChange={e=>updateLine(line.id,'description',e.target.value)}
-                  />
+                <div style={{ padding:'7px 10px' }}>
+                  <input style={{...S.input,padding:'6px 10px',fontSize:13}} placeholder="Merchant / description..." value={line.description} onChange={e=>updateLine(line.id,'description',e.target.value)}/>
                 </div>
-                <div style={{padding:'8px 10px'}}>
-                  <input
-                    type="number"
-                    style={{...S.input,padding:'7px 10px',fontSize:13}}
-                    placeholder="-45.99"
-                    value={line.amount}
-                    onChange={e=>updateLine(line.id,'amount',e.target.value)}
-                  />
+                <div style={{ padding:'7px 10px' }}>
+                  <input type="number" style={{...S.input,padding:'6px 8px',fontSize:12}} placeholder="-45.99" value={line.amount} onChange={e=>updateLine(line.id,'amount',e.target.value)}/>
                 </div>
-                <div style={{padding:'8px 10px'}}>
-                  <select
-                    style={{...S.select,padding:'7px 10px',fontSize:12}}
-                    value={line.currency}
-                    onChange={e=>updateLine(line.id,'currency',e.target.value)}
-                  >
+                <div style={{ padding:'7px 6px' }}>
+                  <select style={{...S.select,padding:'6px 6px',fontSize:11}} value={line.currency} onChange={e=>updateLine(line.id,'currency',e.target.value)}>
                     {CURRENCIES.map(c=><option key={c}>{c}</option>)}
                   </select>
                 </div>
-                <div style={{padding:'8px 10px'}}>
-                  <select
-                    style={{...S.select,padding:'7px 8px',fontSize:12}}
-                    value={line.category}
-                    onChange={e=>updateLine(line.id,'category',e.target.value)}
-                  >
+                <div style={{ padding:'7px 6px' }}>
+                  <select style={{...S.select,padding:'6px 6px',fontSize:11}} value={line.category} onChange={e=>updateLine(line.id,'category',e.target.value)}>
                     {CATEGORIES.map(c=><option key={c}>{c}</option>)}
                   </select>
                 </div>
-                <div style={{padding:'8px 4px',textAlign:'center'}}>
-                  <button onClick={()=>removeLine(line.id)} style={{background:'none',border:'none',color:'#4a4a6a',fontSize:16,cursor:'pointer',lineHeight:1}} title="Remove row">✕</button>
+                <div style={{ padding:'7px 6px' }}>
+                  <select style={{...S.select,padding:'6px 6px',fontSize:11}} value={line.transaction_type} onChange={e=>updateLine(line.id,'transaction_type',e.target.value)}>
+                    {TX_TYPES.map(t=><option key={t}>{t}</option>)}
+                  </select>
+                </div>
+                <div style={{ padding:'7px 4px', textAlign:'center' }}>
+                  <button onClick={()=>removeLine(line.id)} style={{ background:'none', border:'none', color:'#4a4a6a', fontSize:14, cursor:'pointer' }}>✕</button>
                 </div>
               </div>
             ))}
           </div>
 
-          {/* Add row + hint */}
-          <div style={{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:24}}>
-            <button onClick={addLine} style={{...S.btnSm,display:'flex',alignItems:'center',gap:6,fontSize:13}}>
-              + Add Row
-            </button>
-            <p style={{color:'#4a4a6a',fontSize:12}}>Use − for expenses (−45.99) and + for income (3500)</p>
+          <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', marginBottom:20 }}>
+            <button onClick={addLine} style={{ background:'#1e1e2e', border:'1px solid #2a2a3a', borderRadius:8, padding:'6px 14px', fontSize:12, cursor:'pointer', color:'#8888aa', fontFamily:'inherit' }}>+ Add Row</button>
+            <p style={{ color:'#4a4a6a', fontSize:11 }}>Use − for expenses and + for income</p>
           </div>
 
-          {/* Save button */}
-          <button onClick={handleSaveAll} disabled={saving} style={{...S.btn,opacity:saving?0.5:1,minWidth:180}}>
+          <button onClick={handleSaveAll} disabled={saving} style={{ ...S.btn, opacity:saving?0.5:1 }}>
             {saving ? 'Saving...' : `💾 Save ${lines.filter(l=>l.description&&l.amount).length} Transaction${lines.filter(l=>l.description&&l.amount).length!==1?'s':''}`}
           </button>
 
-          {manualStatus && <p style={S.status(manualStatus.startsWith('✓'))}>{manualStatus}</p>}
-
-          {/* Saved transactions */}
-          {savedTx.length > 0 && (
-            <div style={{marginTop:28,borderRadius:16,overflow:'hidden',border:'1px solid #1e1e2e'}}>
-              <div style={{padding:'14px 16px',borderBottom:'1px solid #1e1e2e',display:'flex',justifyContent:'space-between',alignItems:'center',background:'#0a0a0f'}}>
-                <p style={{color:'#fff',fontWeight:700,fontSize:14}}>Saved — {savedTx.length} transactions</p>
-                <span style={{color:'#4a4a6a',fontSize:12}}>Click Edit to modify any field</span>
-              </div>
-              <div style={{overflowX:'auto'}}>
-                <table style={{width:'100%',borderCollapse:'collapse'}}>
-                  <thead><tr>{['Date','Description','Amount','Currency','Category','Bank',''].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-                  <tbody>{savedTx.map(tx=>renderRow(tx))}</tbody>
-                </table>
-              </div>
-            </div>
+          {manualStatus && (
+            <p style={{ marginTop:12, fontSize:13, fontWeight:600, color:manualStatus.startsWith('✓')?'#0d9268':'#c81e1e' }}>{manualStatus}</p>
           )}
         </div>
       )}
