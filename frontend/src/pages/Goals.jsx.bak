@@ -1,0 +1,477 @@
+import { useState, useEffect } from 'react'
+
+const fmt = (n) => '$' + Math.round(Math.abs(n) || 0).toLocaleString()
+const F = 'DM Sans, Inter, sans-serif'
+
+// ── Financial Insights (collapsible) ──
+function FinancialInsights({ profile, projects }) {
+  const [open, setOpen] = useState(false)
+
+  const income = profile?.income_amount || 0
+  const savings = profile?.savings_goal_monthly || 0
+  const debt = profile?.debt_payoff_goal || 0
+  const budget = profile?.monthly_budget || 0
+
+  if (!income && !savings && !debt) return null
+
+  const disposable = income - budget - savings
+  const savingsRate = income > 0 ? Math.round(savings / income * 100) : 0
+  const debtMonths = debt > 0 && income > 0 ? Math.ceil(debt / (income * 0.1)) : null
+
+  const insights = [
+    income > 0 && budget > 0 && {
+      icon: '💰',
+      title: 'Budget is ' + Math.round(budget/income*100) + '% of your income',
+      body: fmt(income) + ' income · ' + fmt(budget) + ' budget · ' + fmt(Math.max(0, income - budget)) + ' remaining after budget'
+    },
+    income > 0 && savings > 0 && {
+      icon: '🏦',
+      title: savingsRate + '% savings rate',
+      body: 'Saving ' + fmt(savings) + '/mo of ' + fmt(income) + ' income. ' + (savingsRate >= 20 ? 'Great — above the recommended 20%.' : savingsRate >= 10 ? 'Good — aim for 20% when possible.' : 'Try to work toward 10-20% over time.')
+    },
+    income > 0 && savings > 0 && budget > 0 && disposable > 0 && {
+      icon: '📊',
+      title: fmt(disposable) + ' unallocated each month',
+      body: 'After your ' + fmt(budget) + ' budget and ' + fmt(savings) + ' savings, you have ' + fmt(disposable) + ' not yet assigned. Consider putting it toward debt or savings.'
+    },
+    debt > 0 && income > 0 && {
+      icon: '💳',
+      title: 'Debt payoff estimate',
+      body: 'At 10% of your income (' + fmt(income * 0.1) + '/mo toward debt), you could clear ' + fmt(debt) + ' in roughly ' + debtMonths + ' months.'
+    },
+    income > 0 && budget > 0 && budget > income * 0.9 && {
+      icon: '⚠️',
+      title: 'Budget is close to your full income',
+      body: 'Your ' + fmt(budget) + ' budget is ' + Math.round(budget/income*100) + '% of your ' + fmt(income) + ' income — leaving little room for savings or unexpected expenses.'
+    },
+  ].filter(Boolean)
+
+  if (insights.length === 0) return null
+
+  return (
+    <div style={{ background:'#0a0d12', border:'1px solid #1e2030', borderRadius:16, marginTop:16, overflow:'hidden' }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ width:'100%', background:'none', border:'none', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center', padding:'14px 20px', fontFamily:F }}>
+        <span style={{ fontSize:12, color:'#475569', fontWeight:600 }}>💡 Monthly insights based on your data</span>
+        <span style={{ color:'#334155', fontSize:11, transform:open?'rotate(180deg)':'none', transition:'transform 0.2s', display:'inline-block' }}>▼</span>
+      </button>
+      {open && (
+        <div style={{ padding:'0 20px 16px', display:'flex', flexDirection:'column', gap:10 }}>
+          {insights.map((ins, i) => (
+            <div key={i} style={{ display:'flex', gap:12, padding:'12px 16px', background:'#0f1117', borderRadius:12, border:'1px solid #1e2030' }}>
+              <span style={{ fontSize:18, flexShrink:0 }}>{ins.icon}</span>
+              <div>
+                <div style={{ color:'#e2e8f0', fontSize:13, fontWeight:600, marginBottom:4 }}>{ins.title}</div>
+                <div style={{ color:'#475569', fontSize:12, lineHeight:1.6 }}>{ins.body}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Project Insights (collapsible) ──
+function ProjectInsights({ project }) {
+  const [open, setOpen] = useState(false)
+  const spent = project.current_amount || 0
+  const count = project.transaction_count || 0
+
+  if (count === 0) return null
+
+  const avgPerTx = count > 0 ? spent / count : 0
+  const insights = [
+    { icon:'💸', title: fmt(spent) + ' total spent', body: count + ' transactions averaging ' + fmt(avgPerTx) + ' each.' },
+    count >= 3 && { icon:'📈', title: 'Active project', body: 'You have ' + count + ' transactions tagged to this project. Keep tagging to get a complete picture.' },
+  ].filter(Boolean)
+
+  return (
+    <div style={{ marginTop:12, background:'#0a0d12', border:'1px solid #1e2030', borderRadius:12, overflow:'hidden' }}>
+      <button onClick={() => setOpen(o => !o)}
+        style={{ width:'100%', background:'none', border:'none', cursor:'pointer', display:'flex', justifyContent:'space-between', alignItems:'center', padding:'10px 14px', fontFamily:F }}>
+        <span style={{ fontSize:11, color:'#475569' }}>💡 Project insights</span>
+        <span style={{ color:'#334155', fontSize:10, transform:open?'rotate(180deg)':'none', transition:'transform 0.2s', display:'inline-block' }}>▼</span>
+      </button>
+      {open && (
+        <div style={{ padding:'0 14px 12px', display:'flex', flexDirection:'column', gap:8 }}>
+          {insights.map((ins, i) => (
+            <div key={i} style={{ display:'flex', gap:10, padding:'10px 12px', background:'#0f1117', borderRadius:10 }}>
+              <span style={{ fontSize:14 }}>{ins.icon}</span>
+              <div>
+                <div style={{ color:'#e2e8f0', fontSize:12, fontWeight:600, marginBottom:2 }}>{ins.title}</div>
+                <div style={{ color:'#475569', fontSize:11, lineHeight:1.5 }}>{ins.body}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Create Project Modal ──
+function CreateProjectModal({ onClose, onCreated }) {
+  const [form, setForm] = useState({ name: '' })
+  const [saving, setSaving] = useState(false)
+  const EXAMPLES = ['New Home', 'Wedding', 'Japan Trip', 'Home Office', 'Baby Expenses', 'Side Business', 'Car Repairs']
+
+  const submit = async () => {
+    if (!form.name.trim()) return
+    setSaving(true)
+    try {
+      await fetch('http://127.0.0.1:8000/projects', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: form.name, type: 'custom', target_amount: null, target_date: null }),
+      })
+      onCreated()
+      onClose()
+    } catch (e) { console.error(e) }
+    finally { setSaving(false) }
+  }
+
+  const S = {
+    overlay: { position:'fixed', inset:0, background:'rgba(0,0,0,0.8)', display:'flex', alignItems:'center', justifyContent:'center', zIndex:1000, backdropFilter:'blur(4px)' },
+    modal: { background:'#0f1117', border:'1px solid #1e2030', borderRadius:20, padding:32, width:440, fontFamily:F, boxShadow:'0 24px 64px rgba(0,0,0,0.6)' },
+    input: { background:'#0a0d12', border:'1px solid #1e2030', borderRadius:10, padding:'11px 14px', color:'#fff', fontSize:14, outline:'none', width:'100%', fontFamily:F, boxSizing:'border-box' },
+    btn: { background:'#2563eb', color:'#fff', border:'none', borderRadius:10, padding:'11px 20px', fontSize:13, fontWeight:700, cursor:'pointer', fontFamily:F },
+    btnGhost: { background:'none', border:'1px solid #1e2030', borderRadius:10, padding:'11px 16px', fontSize:13, color:'#475569', cursor:'pointer', fontFamily:F },
+  }
+
+  return (
+    <div style={S.overlay} onClick={onClose}>
+      <div style={S.modal} onClick={e => e.stopPropagation()}>
+        <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:24 }}>
+          <div>
+            <h2 style={{ color:'#f1f5f9', fontSize:18, fontWeight:700, margin:0, marginBottom:4 }}>New project</h2>
+            <p style={{ color:'#475569', fontSize:12, margin:0 }}>Tag transactions to track spending for any goal</p>
+          </div>
+          <button onClick={onClose} style={{ background:'none', border:'none', color:'#475569', fontSize:18, cursor:'pointer' }}>✕</button>
+        </div>
+
+        <div style={{ marginBottom:16 }}>
+          <div style={{ fontSize:11, color:'#475569', fontWeight:600, letterSpacing:'1px', textTransform:'uppercase', marginBottom:8 }}>Project name</div>
+          <input style={S.input} placeholder="e.g. New Home Expenses" autoFocus
+            value={form.name} onChange={e => setForm({...form, name:e.target.value})}
+            onKeyDown={e => e.key === 'Enter' && form.name && submit()}/>
+        </div>
+
+        <div style={{ marginBottom:24 }}>
+          <div style={{ fontSize:11, color:'#334155', marginBottom:8 }}>Quick pick:</div>
+          <div style={{ display:'flex', flexWrap:'wrap', gap:6 }}>
+            {EXAMPLES.map(ex => (
+              <button key={ex} onClick={() => setForm({...form, name:ex})}
+                style={{ background: form.name===ex?'rgba(37,99,235,0.15)':'#0a0d12', border:`1px solid ${form.name===ex?'#2563eb':'#1e2030'}`, borderRadius:8, padding:'5px 12px', fontSize:12, color: form.name===ex?'#3b82f6':'#64748b', cursor:'pointer', fontFamily:F }}>
+                {ex}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div style={{ background:'rgba(59,130,246,0.06)', border:'1px solid rgba(59,130,246,0.15)', borderRadius:10, padding:'12px 16px', marginBottom:24 }}>
+          <p style={{ color:'#64748b', fontSize:12, lineHeight:1.6, margin:0 }}>
+            💡 After creating, tag transactions from the <strong style={{ color:'#94a3b8' }}>Transactions</strong> page. Spending will appear here automatically.
+          </p>
+        </div>
+
+        <div style={{ display:'flex', gap:10, justifyContent:'flex-end' }}>
+          <button onClick={onClose} style={S.btnGhost}>Cancel</button>
+          <button onClick={submit} disabled={!form.name.trim() || saving}
+            style={{ ...S.btn, opacity: !form.name.trim() || saving ? 0.5 : 1 }}>
+            {saving ? 'Creating…' : 'Create project'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// ── Project Card ──
+function ProjectCard({ project, onDelete }) {
+  const spent = project.current_amount || 0
+  const count = project.transaction_count || 0
+
+  return (
+    <div style={{ background:'#0f1117', border:'1px solid #1e2030', borderRadius:18, padding:'22px 24px', transition:'transform 0.15s' }}
+      onMouseEnter={e => e.currentTarget.style.transform='translateY(-2px)'}
+      onMouseLeave={e => e.currentTarget.style.transform='none'}>
+
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:16 }}>
+        <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+          <div style={{ width:40, height:40, borderRadius:12, background:'rgba(139,92,246,0.1)', border:'1px solid rgba(139,92,246,0.2)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:18 }}>📁</div>
+          <div>
+            <div style={{ color:'#f1f5f9', fontSize:14, fontWeight:700, marginBottom:3 }}>{project.name}</div>
+            <span style={{ fontSize:10, color:'#8b5cf6', background:'rgba(139,92,246,0.1)', padding:'2px 8px', borderRadius:4, fontWeight:600 }}>Project</span>
+          </div>
+        </div>
+        <button onClick={() => onDelete(project.id)}
+          style={{ background:'none', border:'none', color:'#334155', cursor:'pointer', fontSize:14 }}>✕</button>
+      </div>
+
+      <div style={{ marginBottom:12 }}>
+        <div style={{ fontSize:30, fontWeight:800, color: count > 0 ? '#f1f5f9' : '#334155', fontFamily:'monospace', letterSpacing:'-1px', marginBottom:4 }}>
+          {fmt(spent)}
+        </div>
+        <div style={{ fontSize:12, color:'#475569' }}>
+          {count} transaction{count !== 1 ? 's' : ''} tagged
+        </div>
+      </div>
+
+      <div style={{ background:'#151720', borderRadius:99, height:4, overflow:'hidden', marginBottom: count === 0 ? 12 : 0 }}>
+        <div style={{ height:'100%', width:count > 0 ? '100%' : '0%', background:'linear-gradient(90deg, #8b5cf6, #6366f1)', borderRadius:99, transition:'width 0.5s' }}/>
+      </div>
+
+      {count === 0 && (
+        <div style={{ fontSize:11, color:'#334155' }}>
+          No transactions tagged yet · tag from Transactions page
+        </div>
+      )}
+
+      <ProjectInsights project={project} />
+    </div>
+  )
+}
+
+// ── Manual Fixed Expenses ──
+function ManualFixedExpenses() {
+  const [items, setItems] = useState([])
+  const [adding, setAdding] = useState(false)
+  const [form, setForm] = useState({ name:'', amount:'' })
+  const F = 'DM Sans, Inter, sans-serif'
+
+  useEffect(() => {
+    fetch('http://127.0.0.1:8000/manual-fixed')
+      .then(r => r.json()).then(setItems).catch(() => {})
+  }, [])
+
+  const add = async () => {
+    if (!form.name || !form.amount) return
+    await fetch('http://127.0.0.1:8000/manual-fixed', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: form.name, amount: parseFloat(form.amount), frequency: 'monthly' })
+    })
+    setForm({ name:'', amount:'' })
+    setAdding(false)
+    fetch('http://127.0.0.1:8000/manual-fixed').then(r => r.json()).then(setItems)
+  }
+
+  const remove = async (id) => {
+    await fetch(`http://127.0.0.1:8000/manual-fixed/${id}`, { method: 'DELETE' })
+    setItems(p => p.filter(i => i.id !== id))
+  }
+
+  const total = items.reduce((s, i) => s + i.amount, 0)
+
+  return (
+    <div style={{ marginTop:16, background:'#0a0d12', border:'1px solid #1e2030', borderRadius:14, overflow:'hidden' }}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'14px 20px', borderBottom: items.length > 0 || adding ? '1px solid #1e2030' : 'none' }}>
+        <div>
+          <span style={{ fontSize:13, color:'#e2e8f0', fontWeight:600 }}>🏠 Fixed expenses not in statements</span>
+          <p style={{ fontSize:11, color:'#475569', marginTop:2 }}>Rent, mortgage, car payments paid from accounts not uploaded</p>
+        </div>
+        <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+          {total > 0 && <span style={{ fontSize:13, color:'#64748b', fontFamily:'monospace', fontWeight:600 }}>${Math.round(total).toLocaleString()}/mo</span>}
+          <button onClick={() => setAdding(a => !a)}
+            style={{ background:'none', border:'1px solid #1e2030', borderRadius:8, padding:'5px 12px', fontSize:12, color:'#64748b', cursor:'pointer', fontFamily:F }}>
+            {adding ? 'Cancel' : '+ Add'}
+          </button>
+        </div>
+      </div>
+
+      {items.map(item => (
+        <div key={item.id} style={{ display:'flex', justifyContent:'space-between', alignItems:'center', padding:'11px 20px', borderBottom:'1px solid #0f1117' }}>
+          <span style={{ color:'#94a3b8', fontSize:13 }}>{item.name}</span>
+          <div style={{ display:'flex', alignItems:'center', gap:12 }}>
+            <span style={{ color:'#64748b', fontSize:13, fontFamily:'monospace' }}>${Math.round(item.amount).toLocaleString()}/mo</span>
+            <button onClick={() => remove(item.id)} style={{ background:'none', border:'none', color:'#334155', cursor:'pointer', fontSize:13 }}>✕</button>
+          </div>
+        </div>
+      ))}
+
+      {adding && (
+        <div style={{ padding:'14px 20px', display:'flex', gap:10, alignItems:'center', background:'#0f1117' }}>
+          <input placeholder="e.g. Rent" value={form.name} onChange={e => setForm({...form, name:e.target.value})}
+            style={{ flex:1, background:'#0a0d12', border:'1px solid #1e2030', borderRadius:8, padding:'8px 12px', color:'#fff', fontSize:13, outline:'none', fontFamily:F }} autoFocus/>
+          <div style={{ position:'relative' }}>
+            <span style={{ position:'absolute', left:10, top:'50%', transform:'translateY(-50%)', color:'#475569' }}>$</span>
+            <input type="number" placeholder="1500" value={form.amount} onChange={e => setForm({...form, amount:e.target.value})}
+              onKeyDown={e => e.key === 'Enter' && add()}
+              style={{ width:100, background:'#0a0d12', border:'1px solid #1e2030', borderRadius:8, padding:'8px 12px 8px 24px', color:'#fff', fontSize:13, outline:'none', fontFamily:'monospace' }}/>
+          </div>
+          <button onClick={add} disabled={!form.name||!form.amount}
+            style={{ background:'#2563eb', border:'none', borderRadius:8, padding:'8px 16px', color:'#fff', fontSize:12, cursor:'pointer', fontWeight:600, fontFamily:F, opacity:!form.name||!form.amount?0.5:1 }}>
+            Add
+          </button>
+        </div>
+      )}
+
+      {items.length === 0 && !adding && (
+        <div style={{ padding:'12px 20px' }}>
+          <p style={{ color:'#283244', fontSize:12 }}>No manual fixed expenses added yet. Add rent, mortgage, or car payments that are paid from accounts not uploaded.</p>
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ── Financial Overview ──
+function FinancialOverview({ profile, onSave }) {
+  const [editing, setEditing] = useState(null)
+  const [val, setVal] = useState('')
+
+  const startEdit = (field, current) => { setEditing(field); setVal(current ? String(current) : '') }
+  const save = async () => { await onSave(editing, parseFloat(val) || 0); setEditing(null) }
+
+  const items = [
+    { field:'income_amount',        label:'Monthly income',        icon:'💰', value: profile?.income_amount || 0,        color:'#10b981', hint:'Your take-home pay after tax' },
+    { field:'savings_goal_monthly', label:'Monthly savings target', icon:'🏦', value: profile?.savings_goal_monthly || 0, color:'#3b82f6', hint:'How much you want to save each month' },
+    { field:'debt_payoff_goal',     label:'Total debt to pay off',  icon:'💳', value: profile?.debt_payoff_goal || 0,     color:'#ef4444', hint:'Total debt balance you are working to clear' },
+  ]
+
+  return (
+    <div style={{ background:'#0f1117', border:'1px solid #1e2030', borderRadius:20, padding:'24px 28px', marginBottom:24 }}>
+      <div style={{ marginBottom:20 }}>
+        <h2 style={{ fontSize:16, fontWeight:700, color:'#f1f5f9', marginBottom:4 }}>Financial overview</h2>
+        <p style={{ fontSize:12, color:'#475569' }}>Optional — used for deeper insights. Your dashboard works without these.</p>
+      </div>
+
+      <div style={{ display:'grid', gridTemplateColumns:'repeat(3, 1fr)', gap:12 }}>
+        {items.map(item => (
+          <div key={item.field} style={{ background:'#0a0d12', border:'1px solid #1e2030', borderRadius:14, padding:'18px 20px' }}>
+            <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:12 }}>
+              <div style={{ display:'flex', alignItems:'center', gap:8 }}>
+                <span style={{ fontSize:16 }}>{item.icon}</span>
+                <span style={{ fontSize:10, color:'#475569', fontWeight:700, textTransform:'uppercase', letterSpacing:'0.8px' }}>{item.label}</span>
+              </div>
+              <button onClick={() => startEdit(item.field, item.value)}
+                style={{ background:'none', border:'1px solid #1e2030', borderRadius:6, padding:'3px 9px', fontSize:11, color:'#475569', cursor:'pointer', fontFamily:F }}>
+                ✎ Edit
+              </button>
+            </div>
+            {editing === item.field ? (
+              <div style={{ display:'flex', gap:6, alignItems:'center' }}>
+                <span style={{ color:'#475569' }}>$</span>
+                <input autoFocus type="number" value={val} onChange={e => setVal(e.target.value)}
+                  onKeyDown={e => { if(e.key==='Enter') save(); if(e.key==='Escape') setEditing(null) }}
+                  style={{ background:'#1e2030', border:'1px solid #3b82f6', borderRadius:8, padding:'6px 10px', color:'#fff', fontSize:16, outline:'none', fontFamily:'monospace', width:'100%' }}/>
+                <button onClick={save}
+                  style={{ background:'#2563eb', border:'none', borderRadius:7, padding:'6px 10px', color:'#fff', fontSize:12, cursor:'pointer', fontFamily:F, fontWeight:600, whiteSpace:'nowrap' }}>Save</button>
+              </div>
+            ) : (
+              <div>
+                <div style={{ fontSize:24, fontWeight:800, color: item.value > 0 ? item.color : '#334155', fontFamily:'monospace', letterSpacing:'-0.5px' }}>
+                  {item.value > 0 ? fmt(item.value) : '—'}
+                </div>
+                {item.value === 0 && <div style={{ fontSize:11, color:'#283244', marginTop:4 }}>{item.hint}</div>}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <ManualFixedExpenses />
+      <FinancialInsights profile={profile} />
+    </div>
+  )
+}
+
+// ── Main Goals Page ──
+export default function Goals() {
+  const [projects, setProjects] = useState([])
+  const [profile, setProfile] = useState({})
+  const [showModal, setShowModal] = useState(false)
+  const [loading, setLoading] = useState(true)
+
+  const load = () => {
+    Promise.all([
+      fetch('http://127.0.0.1:8000/projects').then(r => r.json()).catch(() => []),
+      fetch('http://127.0.0.1:8000/profile').then(r => r.json()).catch(() => ({})),
+    ]).then(([p, prof]) => {
+      setProjects(Array.isArray(p) ? p : [])
+      setProfile(prof || {})
+      setLoading(false)
+    })
+  }
+
+  useEffect(() => { load() }, [])
+
+  const handleDelete = async (id) => {
+    await fetch(`http://127.0.0.1:8000/projects/${id}`, { method:'DELETE' })
+    setProjects(p => p.filter(x => x.id !== id))
+  }
+
+  const saveProfile = async (field, value) => {
+    setProfile(p => ({...p, [field]: value}))
+    await fetch('http://127.0.0.1:8000/profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ [field]: value })
+    }).catch(() => {})
+  }
+
+  const S = {
+    page: { padding:'32px 48px 64px', maxWidth:1200, margin:'0 auto', fontFamily:F, background:'#080b0f', minHeight:'100vh' },
+    btn: { background:'#2563eb', color:'#fff', border:'none', borderRadius:10, padding:'10px 20px', fontSize:13, fontWeight:700, cursor:'pointer', fontFamily:F },
+  }
+
+  return (
+    <div style={S.page}>
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'flex-start', marginBottom:28 }}>
+        <div>
+          <h1 style={{ fontSize:26, fontWeight:800, color:'#f1f5f9', letterSpacing:'-0.5px', marginBottom:6 }}>Goals & Projects</h1>
+          <p style={{ color:'#475569', fontSize:13 }}>Track financial targets and tag transactions to custom projects</p>
+        </div>
+        <button onClick={() => setShowModal(true)} style={S.btn}>+ New project</button>
+      </div>
+
+      <FinancialOverview profile={profile} onSave={saveProfile} />
+
+      <div style={{ display:'flex', justifyContent:'space-between', alignItems:'center', marginBottom:16 }}>
+        <div>
+          <h2 style={{ fontSize:16, fontWeight:700, color:'#f1f5f9', marginBottom:4 }}>Projects</h2>
+          <p style={{ fontSize:12, color:'#475569' }}>Tag transactions to any project to track spending by goal</p>
+        </div>
+        {projects.length > 0 && (
+          <button onClick={() => setShowModal(true)}
+            style={{ background:'none', border:'1px solid #1e2030', borderRadius:10, padding:'8px 16px', fontSize:12, color:'#64748b', cursor:'pointer', fontFamily:F }}>
+            + Add project
+          </button>
+        )}
+      </div>
+
+      {loading ? (
+        <div style={{ color:'#475569', fontSize:13 }}>Loading…</div>
+      ) : projects.length === 0 ? (
+        <div style={{ background:'#0f1117', border:'1px solid #1e2030', borderRadius:20, padding:'48px 20px', textAlign:'center' }}>
+          <div style={{ fontSize:40, marginBottom:16 }}>📁</div>
+          <div style={{ color:'#f1f5f9', fontSize:16, fontWeight:700, marginBottom:8 }}>No projects yet</div>
+          <div style={{ color:'#475569', fontSize:13, marginBottom:20, maxWidth:360, margin:'0 auto 20px' }}>
+            Create a project to track spending for specific goals — like a new home, wedding, or side business.
+          </div>
+          <button onClick={() => setShowModal(true)} style={S.btn}>+ Create first project</button>
+          <div style={{ display:'flex', justifyContent:'center', gap:32, marginTop:32 }}>
+            {[
+              ['1', 'Create a project', 'Give it a name like "New Home"'],
+              ['2', 'Tag transactions', 'Assign expenses from Transactions page'],
+              ['3', 'Track spending', 'See total spent per project here'],
+            ].map(([num, title, desc]) => (
+              <div key={num} style={{ textAlign:'center', maxWidth:140 }}>
+                <div style={{ width:28, height:28, borderRadius:99, background:'rgba(37,99,235,0.15)', border:'1px solid rgba(37,99,235,0.3)', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, color:'#3b82f6', fontWeight:700, margin:'0 auto 8px' }}>{num}</div>
+                <div style={{ color:'#e2e8f0', fontSize:12, fontWeight:600, marginBottom:4 }}>{title}</div>
+                <div style={{ color:'#475569', fontSize:11, lineHeight:1.5 }}>{desc}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : (
+        <div style={{ display:'grid', gridTemplateColumns:'repeat(auto-fill, minmax(300px, 1fr))', gap:14 }}>
+          {projects.map(p => <ProjectCard key={p.id} project={p} onDelete={handleDelete} />)}
+        </div>
+      )}
+
+      {showModal && <CreateProjectModal onClose={() => setShowModal(false)} onCreated={load} />}
+    </div>
+  )
+}

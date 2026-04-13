@@ -1,0 +1,24 @@
+@media (max-width: 768px) {
+  /* Stack all grids */
+  [style*="gridTemplateColumns"] {
+    grid-template-columns: 1fr !important;
+  }
+  /* Reduce padding */
+  [style*="padding:'28px 40px"] {
+    padding: 16px !important;
+  }
+  /* Reduce font sizes */
+  [style*="fontSize:64"] {
+    font-size: 40px !important;
+  }
+  [style*="fontSize:52"] {
+    font-size: 36px !important;
+  }
+}
+
+@media (max-width: 1024px) {
+  /* 2-col on tablet */
+  .kpi-3col {
+    grid-template-columns: 1fr 1fr !important;
+  }
+}

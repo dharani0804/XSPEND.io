@@ -21,8 +21,8 @@ export default function Navbar() {
     }}>
 
       <Link to="/" style={{display:'flex', alignItems:'center', gap:10, textDecoration:'none', minWidth:140}}>
-        <div style={{width:34, height:34, borderRadius:10, background:'linear-gradient(135deg,#3b82f6,#1d4ed8)', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontWeight:800, fontSize:15, boxShadow:'0 4px 14px rgba(59,130,246,0.3)'}}>F</div>
-        <span style={{fontWeight:700, fontSize:16, color:'#fff'}}>FinanceAI</span>
+        <div style={{width:34, height:34, borderRadius:10, background:'linear-gradient(135deg,#3b82f6,#1d4ed8)', display:'flex', alignItems:'center', justifyContent:'center', color:'#fff', fontWeight:800, fontSize:15, boxShadow:'0 4px 14px rgba(59,130,246,0.3)'}}>x</div>
+        <span style={{fontWeight:800, fontSize:18, color:'#fff', letterSpacing:'-0.5px'}}>xspend</span>
       </Link>
 
       <div style={{display:'flex', alignItems:'center', gap:4, background:'#12121e', border:'1px solid #1e1e2e', borderRadius:16, padding:4}}>

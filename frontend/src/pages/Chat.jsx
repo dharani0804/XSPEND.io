@@ -9,7 +9,7 @@ const suggestions = [
 
 export default function Chat() {
   const [messages, setMessages] = useState([
-    { role: 'assistant', text: "Hi, I'm FinanceAI. I've analysed your transactions and I'm ready to help. Ask me anything about your spending." }
+    { role: 'assistant', text: "Hi, I'm xspend. I've analysed your transactions and I'm ready to help. Ask me anything about your spending." }
   ])
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -55,7 +55,7 @@ export default function Chat() {
           {messages.map((msg, i) => (
             <div key={i} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
               {msg.role === 'assistant' && (
-                <div className="w-7 h-7 rounded-lg bg-blue-500 flex items-center justify-center text-white text-xs font-bold mr-2 mt-1 flex-shrink-0">F</div>
+                <div className="w-7 h-7 rounded-lg bg-blue-500 flex items-center justify-center text-white text-xs font-bold mr-2 mt-1 flex-shrink-0">x</div>
               )}
               <div className={`max-w-md px-4 py-3 rounded-xl text-sm leading-relaxed whitespace-pre-wrap ${
                 msg.role === 'user'
@@ -68,7 +68,7 @@ export default function Chat() {
           ))}
           {loading && (
             <div className="flex items-start gap-2">
-              <div className="w-7 h-7 rounded-lg bg-blue-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">F</div>
+              <div className="w-7 h-7 rounded-lg bg-blue-500 flex items-center justify-center text-white text-xs font-bold flex-shrink-0">x</div>
               <div style={{border:'1px solid #2a2a3a'}} className="bg-[#1a1a28] px-4 py-3 rounded-xl text-sm text-[#55556a]">
                 Analysing...
               </div>
