@@ -475,7 +475,12 @@ export default function Goals() {
     })
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    load()
+    const onFocus = () => load()
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
+  }, [])
 
   const handleDelete = async id => {
     await fetch(`http://127.0.0.1:8000/projects/${id}`, { method: 'DELETE' })

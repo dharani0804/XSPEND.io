@@ -3,7 +3,7 @@ import { useState, useEffect, useMemo } from 'react'
 const DEFAULT_CATEGORIES = [
   'Food & Dining','Groceries','Transport','Rent & Utilities',
   'Subscriptions','Health','Shopping','Entertainment','Travel',
-  'Personal Care','Pets','Education','Salary','Transfer','Payment','Other'
+  'Personal Care','Pets','Education','Rent & Utilities','Government & Taxes','Bank Fees','Gifts & Donations','Professional Services','Baby & Kids','Alcohol & Liquor','Transfer','Credit Card Payment','Other'
 ]
 
 const F = 'DM Sans, Inter, sans-serif'

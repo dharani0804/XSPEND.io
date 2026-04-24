@@ -16,7 +16,8 @@ except ImportError:
     HAS_OFX = False
 from datetime import datetime
 from classifier import classify_transaction, generate_fingerprint, normalize_description
-from ai import parse_statement_with_claude
+# ai.py removed — Claude fallback disabled
+def parse_statement_with_claude(text, filename, bank): return [], bank
 
 # ── US Bank detection keywords ──
 US_BANK_PATTERNS = {
@@ -475,6 +476,77 @@ def parse_ofx(file_bytes: bytes, bank_hint: str = None) -> tuple:
     return transactions, bank
 
 
+# ── Column aliases for dynamic CSV detection ──
+COLUMN_ALIASES = {
+    'date':        ['date','trans date','transaction date','trans. date','posted date',
+                    'settlement date','value date','effective date'],
+    'description': ['description','memo','narrative','merchant','payee','details',
+                    'transaction description','name','reference'],
+    'amount':      ['amount','transaction amount','net amount','sum'],
+    'debit':       ['debit','withdrawal','withdrawals','debit amount','money out',
+                    'charges','dr'],
+    'credit':      ['credit','deposit','deposits','credit amount','money in',
+                    'payments','cr'],
+    'balance':     ['balance','running balance','ledger balance'],
+    'category':    ['category','type','transaction type'],
+}
+
+# Known bank CSV column mappings
+BANK_CSV_PROFILES = {
+    'chase': {
+        'date':'Transaction Date', 'description':'Description',
+        'amount':'Amount', 'sign':'standard'
+    },
+    'discover': {
+        'date':'Trans. Date', 'description':'Description',
+        'amount':'Amount', 'sign':'negate'  # Discover positive = charge
+    },
+    'citi': {
+        'date':'Date', 'description':'Description',
+        'debit':'Debit', 'credit':'Credit', 'sign':'debit_credit'
+    },
+    'wells fargo': {
+        'date':'Date', 'description':'Description',
+        'amount':'Amount', 'sign':'standard'
+    },
+    'amex': {
+        'date':'Date', 'description':'Description',
+        'amount':'Amount', 'sign':'negate'
+    },
+    'bofa': {
+        'date':'Date', 'description':'Description',
+        'amount':'Amount', 'sign':'standard'
+    },
+    'capital one': {
+        'date':'Transaction Date', 'description':'Description',
+        'debit':'Debit', 'credit':'Credit', 'sign':'debit_credit'
+    },
+}
+
+def detect_csv_columns(headers: list) -> dict:
+    """Dynamically detect column mapping from CSV headers."""
+    headers_lower = [h.lower().strip() for h in headers]
+    mapping = {}
+    for field, aliases in COLUMN_ALIASES.items():
+        for i, h in enumerate(headers_lower):
+            if any(alias == h or alias in h for alias in aliases):
+                mapping[field] = headers[i]
+                break
+    return mapping
+
+def normalize_amount(amount_str: str) -> float:
+    """Handle various amount formats: $1,234.56 (1,234.56) -1234.56"""
+    if not amount_str:
+        return None
+    s = str(amount_str).strip().replace(',','').replace('$','').replace('£','').replace('€','')
+    # Handle parentheses as negative
+    if s.startswith('(') and s.endswith(')'):
+        s = '-' + s[1:-1]
+    try:
+        return float(s)
+    except:
+        return None
+
 def parse_csv(file_bytes: bytes, bank_hint: str = None) -> tuple:
     # Try multiple encodings
     for encoding in ['utf-8', 'latin-1', 'cp1252']:
@@ -506,18 +578,150 @@ def parse_csv(file_bytes: bytes, bank_hint: str = None) -> tuple:
     bank = detect_bank_from_text(text) or bank_hint or 'Unknown Bank'
     return rows_from_dataframe(df, bank, 'csv'), bank
 
+def parse_toll_xlsx(file_bytes: bytes) -> tuple:
+    """Parse toll account XLSX exports (NTTA, EZPass, SunPass, etc)."""
+    try:
+        import pandas as pd, io
+        from datetime import datetime
+        df = pd.read_excel(io.BytesIO(file_bytes), engine='openpyxl', dtype=str)
+        df.columns = [str(c).strip() for c in df.columns]
+
+        # Detect toll file by checking for toll-specific columns
+        col_lower = [c.lower() for c in df.columns]
+        if not any('toll' in c or 'tolltag' in c or 'transaction type' in c for c in col_lower):
+            return [], 'Unknown'
+
+        # Find date column
+        date_col = next((c for c in df.columns if 'exit date' in c.lower() or 'posted date' in c.lower()), None)
+        if not date_col:
+            return [], 'Toll Account'
+
+        transactions = []
+        for _, row in df.iterrows():
+            tx_type_raw = str(row.get('Transaction Type', '')).strip().upper()
+            if tx_type_raw != 'TOLL':
+                continue  # Skip payments/replenishments
+
+            date_val = str(row.get(date_col, '')).strip()
+            if not date_val or date_val == 'nan':
+                continue
+
+            # Parse date
+            parsed_date = None
+            for fmt in ['%m/%d/%Y %H:%M:%S', '%m/%d/%Y', '%Y-%m-%d']:
+                try:
+                    parsed_date = datetime.strptime(date_val[:19], fmt[:len(date_val[:19])]).strftime('%Y-%m-%d')
+                    break
+                except:
+                    continue
+            if not parsed_date:
+                continue
+
+            location = str(row.get('Location', '')).strip()
+            if not location or location == 'nan':
+                location = 'Toll'
+
+            amount_str = str(row.get('Transaction Amount', '')).strip()
+            amount = normalize_amount(amount_str)
+            if amount is None:
+                continue
+
+            tx_id = str(row.get('Transaction ID', '')).strip()
+            # Include transaction ID and time in description to ensure unique fingerprints
+            exit_time = str(row.get('Transaction Exit Date/Time', '')).strip()
+            time_suffix = exit_time[11:19] if len(exit_time) > 10 else ''
+            
+            transactions.append({
+                'date': parsed_date,
+                'description': f'Toll - {location}',
+                'original_description': f'Toll - {location}',
+                'amount': amount,
+                'external_transaction_id': tx_id,
+                'raw_date': exit_time[:10] if exit_time else parsed_date,
+            })
+
+        print(f'  Toll parser: {len(transactions)} toll transactions')
+        return transactions, 'Toll Account'
+    except Exception as e:
+        print(f'  Toll parse error: {e}')
+        return [], 'Unknown'
+
+
+
+
+
 def parse_excel(file_bytes: bytes, bank_hint: str = None) -> tuple:
     try:
-        df = pd.read_excel(io.BytesIO(file_bytes))
-    except:
-        return [], 'Unknown Bank'
+        import pandas as pd, io
+        try:
+            df = pd.read_excel(io.BytesIO(file_bytes), engine='openpyxl', dtype=str)
+        except:
+            df = pd.read_excel(io.BytesIO(file_bytes), engine='xlrd', dtype=str)
 
-    text = ' '.join([str(c).lower() for c in df.columns])
-    for row in df.head(5).values:
-        text += ' ' + ' '.join([str(v).lower() for v in row if v and str(v) != 'nan'])
+        df.columns = [str(c).strip() for c in df.columns]
 
-    bank = detect_bank_from_text(text) or bank_hint or 'Unknown Bank'
-    return rows_from_dataframe(df, bank, 'xlsx'), bank
+        # Detect toll account export
+        col_lower = [c.lower() for c in df.columns]
+        if any('tolltag' in c for c in col_lower):
+            return parse_toll_xlsx(file_bytes)
+
+        # Skip rows until we find the header row
+        for i in range(min(10, len(df))):
+            row_vals = ' '.join(str(v).lower() for v in df.iloc[i].values)
+            if any(alias in row_vals for alias in ['date','description','amount','debit']):
+                df.columns = [str(v).strip() for v in df.iloc[i].values]
+                df = df.iloc[i+1:].reset_index(drop=True)
+                break
+
+        col_map = detect_csv_columns(list(df.columns))
+        if 'date' not in col_map:
+            return [], bank_hint or 'Unknown Bank'
+
+        from datetime import datetime
+        transactions = []
+        for _, row in df.iterrows():
+            date_val = str(row.get(col_map['date'], '')).strip()
+            if not date_val or date_val == 'nan':
+                continue
+            parsed_date = None
+            for fmt in ['%m/%d/%Y','%Y-%m-%d','%m/%d/%y','%d/%m/%Y']:
+                try:
+                    parsed_date = datetime.strptime(date_val, fmt).strftime('%Y-%m-%d')
+                    break
+                except:
+                    continue
+            if not parsed_date:
+                continue
+            desc_col = col_map.get('description')
+            desc = str(row.get(desc_col, '')).strip() if desc_col else ''
+            if not desc or desc == 'nan':
+                continue
+            amount = None
+            if 'debit' in col_map and 'credit' in col_map:
+                debit = normalize_amount(row.get(col_map['debit'], ''))
+                credit = normalize_amount(row.get(col_map['credit'], ''))
+                if debit and debit != 0:
+                    amount = -abs(debit)
+                elif credit and credit != 0:
+                    amount = abs(credit)
+            elif 'amount' in col_map:
+                raw_amt = normalize_amount(row.get(col_map['amount'], ''))
+                if raw_amt is None:
+                    continue
+                bank_lower = (bank_hint or '').lower()
+                if any(k in bank_lower for k in ['discover','amex','american express']):
+                    amount = -raw_amt
+                else:
+                    amount = raw_amt
+            if amount is None or amount == 0:
+                continue
+            transactions.append({'date': parsed_date, 'description': desc, 'amount': amount})
+
+        print(f"  Excel parser: {len(transactions)} transactions")
+        return transactions, bank_hint or 'Unknown Bank'
+    except Exception as e:
+        print(f"  Excel parse error: {e}")
+        return [], bank_hint or 'Unknown Bank'
 
 def parse_pdf_structured(file_bytes: bytes, bank: str) -> tuple:
     # Try XY parser first for supported banks
@@ -527,7 +731,7 @@ def parse_pdf_structured(file_bytes: bytes, bank: str) -> tuple:
             warnings.simplefilter('ignore')
             from pdf_parser_xy import parse_pdf_xy
         bank_lower = (bank or '').lower()
-        if any(k in bank_lower for k in ['amex','american express','chase','bofa','bank of america']):
+        if any(k in bank_lower for k in ['amex','american express','chase','bofa','bank of america','wells fargo','wellsfargo','macys','macys-citi','macy','discover']):
             txs, count = parse_pdf_xy(file_bytes, bank)
             if count > 0:
                 print(f'  XY parser got {count} transactions — no Claude needed')
@@ -608,12 +812,12 @@ def parse_pdf(file_bytes: bytes, filename: str, bank_hint: str = None) -> tuple:
             "This PDF appears to be a scanned image. Please export your statement as a text-based PDF or CSV from your bank's website."
         )
 
-    bank = detect_bank_from_text(all_text) or bank_hint or 'Unknown Bank'
+    bank = bank_hint or detect_bank_from_text(all_text) or 'Unknown Bank'
     print(f"PDF bank detected: {bank}, text length: {len(all_text)}")
 
     # Try structured table extraction first — faster and no API needed
     raw, detected_bank = parse_pdf_structured(file_bytes, bank)
-    if len(raw) >= 5:
+    if len(raw) >= 1:
         print(f"  Structured extraction: {len(raw)} transactions (no AI needed)")
     else:
         print(f"  Structured extraction got {len(raw)}, falling back to Claude...")
@@ -679,6 +883,10 @@ def enrich_transaction(tx: dict, user_rules: list = None) -> dict:
         tx['exclusion_reason'] = 'statement_credit'
         return tx
 
+    # Normalize date field — some parsers use 'date', pipeline expects 'transaction_date'
+    if 'date' in tx and not tx.get('transaction_date'):
+        tx['transaction_date'] = tx['date']
+
     # Check financing fees and payment summaries FIRST — always exclude
     should_excl, excl_reason = should_exclude_transaction(tx.get('description', ''))
     if should_excl:
@@ -698,7 +906,7 @@ def enrich_transaction(tx: dict, user_rules: list = None) -> dict:
         return tx
 
     tx_type, category, confidence, needs_review = classify_transaction(
-        tx['description'], tx['amount'], user_rules
+        tx['description'], tx['amount'], bank=tx.get('bank_source'), user_rules=user_rules
     )
     # OFX provides reliable type hints — use them for high confidence cases
     type_hint = tx.pop('_tx_type_hint', None)
@@ -710,11 +918,14 @@ def enrich_transaction(tx: dict, user_rules: list = None) -> dict:
         category = tx['raw_category']
         confidence = 'medium'
 
+    # Use external_transaction_id for better dedup when available
+    ext_id = tx.get('external_transaction_id', '')
     fingerprint = generate_fingerprint(
         tx.get('bank_source', 'unknown'),
         tx.get('transaction_date', ''),
         tx.get('amount', 0),
         tx.get('description', ''),
+        ext_id=ext_id,
     )
     return {
         **tx,
@@ -725,20 +936,136 @@ def enrich_transaction(tx: dict, user_rules: list = None) -> dict:
         'fingerprint': fingerprint,
     }
 
+# Bank format hints for failed/unsupported parsers
+BANK_FORMAT_HINTS = {
+    'discover':  ('CSV', 'discover.com → Activity → Download → Comma Separated (CSV)'),
+    'barclays':  ('CSV', 'barclays.co.uk → Statements → Export as CSV'),
+    'citi':      ('CSV', 'online.citi.com → Statements → Download → CSV'),
+    'wells fargo': ('CSV', 'wellsfargo.com → Statements → Download → CSV'),
+    'capital one': ('CSV', 'capitalone.com → Account → Download Transactions → CSV'),
+    'td bank':   ('CSV', 'tdbank.com → Statements → Download → CSV'),
+    'usaa':      ('CSV', 'usaa.com → Statements → Download CSV'),
+}
+
+def detect_mime_type(file_bytes: bytes, filename: str) -> str:
+    """Detect actual file type from bytes, not just extension."""
+    # Check magic bytes
+    if file_bytes[:4] == b'%PDF':
+        return 'pdf'
+    if file_bytes[:2] in (b'PK', ):  # ZIP-based (xlsx)
+        return 'xlsx'
+    if file_bytes[:8] == b'\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1':  # OLE2 (xls)
+        return 'xls'
+    if file_bytes[:3] == b'\xef\xbb\xbf' or b',' in file_bytes[:200]:  # UTF-8 BOM or CSV
+        if b',' in file_bytes[:500] or b';' in file_bytes[:500]:
+            return 'csv'
+    if b'OFXHEADER' in file_bytes[:200] or b'<OFX>' in file_bytes[:500]:
+        return 'ofx'
+    # Fall back to extension
+    fname = filename.lower()
+    for ext in ['.pdf','.csv','.xlsx','.xls','.ofx','.qfx']:
+        if fname.endswith(ext):
+            return ext.lstrip('.')
+    return 'unknown'
+
+def is_valid_row(tx: dict) -> bool:
+    """Check if a transaction row has required fields."""
+    date = tx.get('date') or tx.get('transaction_date')
+    amount = tx.get('amount')
+    desc = tx.get('description','').strip()
+    return bool(date and amount is not None and amount != 0 and desc)
+
+def check_parse_threshold(rows: list, mode: str) -> tuple:
+    """Returns (passed, valid_ratio)."""
+    thresholds = {'template':0.90, 'generic_table':0.80, 'generic_text':0.75, 'ocr':0.65}
+    if not rows:
+        return False, 0.0
+    valid = sum(1 for r in rows if is_valid_row(r))
+    ratio = valid / len(rows)
+    return ratio >= thresholds.get(mode, 0.75), round(ratio, 2)
+
+def get_format_hint(bank: str) -> str:
+    """Return download instructions for banks with parse issues."""
+    if not bank:
+        return ''
+    bank_lower = bank.lower()
+    for key, (fmt, instructions) in BANK_FORMAT_HINTS.items():
+        if key in bank_lower:
+            return f"For best results with {bank}, download as {fmt}: {instructions}"
+    return "Try downloading your statement as CSV from your bank's website."
+
 def parse_statement(filename: str, file_bytes: bytes, bank_name: str = None, user_rules: list = None):
     fname = filename.lower()
     bank_hint = bank_name if bank_name and bank_name != 'Unknown Bank' else None
 
-    if fname.endswith('.csv'):
-        raw, detected_bank = parse_csv(file_bytes, bank_hint)
-    elif fname.endswith(('.xlsx', '.xls')):
-        raw, detected_bank = parse_excel(file_bytes, bank_hint)
-    elif fname.endswith('.pdf'):
-        raw, detected_bank = parse_pdf(file_bytes, filename, bank_hint)
-    elif fname.endswith(('.ofx', '.qfx')):
-        raw, detected_bank = parse_ofx(file_bytes, bank_hint)
-    else:
-        raise ValueError('Unsupported format. Please upload CSV, XLSX, XLS, PDF, OFX, or QFX.')
+    # ── MIME detection — don't trust extension alone ──
+    detected_type = detect_mime_type(file_bytes, filename)
+
+    # ── Password-protected PDF check ──
+    if detected_type == 'pdf':
+        try:
+            import io, pdfplumber
+            with pdfplumber.open(io.BytesIO(file_bytes)) as pdf:
+                _ = pdf.pages[0].extract_text()
+        except Exception as e:
+            if 'password' in str(e).lower() or 'encrypted' in str(e).lower():
+                raise ValueError("This PDF is password-protected. Please remove the password and re-upload.")
+
+    # ── Detect bank from filename if not provided ──
+    if not bank_hint:
+        fname_lower = filename.lower()
+        if 'discover' in fname_lower:
+            bank_hint = 'Discover'
+        elif 'chase' in fname_lower:
+            bank_hint = 'Chase'
+        elif 'citi' in fname_lower:
+            bank_hint = 'Citi'
+        elif 'wells' in fname_lower or 'wf' in fname_lower:
+            bank_hint = 'Wells Fargo'
+        elif 'amex' in fname_lower or 'american' in fname_lower:
+            bank_hint = 'American Express'
+        elif 'bofa' in fname_lower or 'bofamerica' in fname_lower:
+            bank_hint = 'Bank of America'
+        elif 'discover' in fname_lower:
+            bank_hint = 'Discover'
+        elif 'barclays' in fname_lower:
+            bank_hint = 'Barclays'
+        elif 'capital' in fname_lower:
+            bank_hint = 'Capital One'
+        elif 'macys' in fname_lower or 'macy' in fname_lower:
+            bank_hint = 'Macys-Citi'
+
+    # ── Route by detected type ──
+    parse_mode = 'unknown'
+    try:
+        if detected_type in ('csv',) or fname.endswith('.csv'):
+            raw, detected_bank = parse_csv(file_bytes, bank_hint)
+            parse_mode = 'csv'
+        elif detected_type in ('xlsx','xls') or fname.endswith(('.xlsx','.xls')):
+            raw, detected_bank = parse_excel(file_bytes, bank_hint)
+            parse_mode = 'excel'
+        elif detected_type == 'pdf' or fname.endswith('.pdf'):
+            raw, detected_bank = parse_pdf(file_bytes, filename, bank_hint)
+            parse_mode = 'template' if raw else 'failed'
+        elif detected_type == 'ofx' or fname.endswith(('.ofx','.qfx')):
+            raw, detected_bank = parse_ofx(file_bytes, bank_hint)
+            parse_mode = 'ofx'
+        else:
+            raise ValueError('Unsupported format. Please upload CSV, XLSX, XLS, PDF, OFX, or QFX.')
+    except ValueError:
+        raise
+    except Exception as e:
+        hint = get_format_hint(bank_hint or '')
+        msg = f"Could not parse this file."
+        if hint:
+            msg += f" {hint}"
+        raise ValueError(msg)
+
+    # ── Threshold check ──
+    passed, valid_ratio = check_parse_threshold(raw, parse_mode)
+    if not passed and len(raw) == 0:
+        hint = get_format_hint(bank_hint or detected_bank if 'detected_bank' in dir() else '')
+        raise ValueError(f"No transactions found in this file. {hint}")
 
     final_bank = detected_bank or bank_hint or 'Unknown Bank'
 

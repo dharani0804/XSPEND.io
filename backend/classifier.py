@@ -765,8 +765,9 @@ def emit_recurring_hint(category: str, merchant: str) -> bool:
     return category in RECURRING_HINT_CATEGORIES
 
 
-def generate_fingerprint(bank: str, date: str, amount: float, description: str) -> str:
-    raw = f"{bank}|{date}|{round(float(amount),2)}|{description[:30].lower()}"
+def generate_fingerprint(bank: str, date: str, amount: float, description: str, ext_id: str = "") -> str:
+    id_part = f"|\{ext_id}" if ext_id else ""
+    raw = f"{bank}|{date}|{round(float(amount),2)}|{description[:60].lower()}{id_part}"
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
@@ -850,7 +851,7 @@ def classify_with_meta(
             if matched:
                 tx_type = rule.get('transaction_type') or 'expense'
                 category = rule.get('category') or 'Other'
-                confidence = 'high' if rule.get('confidence_override', 0) >= 0.8 else 'medium'
+                confidence = 'high' if (rule.get('confidence_override') or 0) >= 0.8 else 'medium'
                 scope = 'user' if (rule.get('user_id') and rule.get('user_id') == user_id) else 'global'
                 meta['matched_rule_scope'] = scope
                 meta['matched_rule_id'] = str(rule.get('id', ''))

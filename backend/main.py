@@ -10,7 +10,8 @@ from models import (
     seed_default_categories, gen_uuid
 )
 from parser import parse_statement
-from ai import get_ai_response
+# ai.py removed
+def get_ai_response(prompt): return "AI unavailable"
 from datetime import datetime
 from pydantic import BaseModel
 from typing import Optional, List
@@ -118,6 +119,7 @@ def tx_to_dict(t: Transaction) -> dict:
         "status": t.status,
         "bank_source": t.bank_source,
         "account_id": t.account_id,
+        "project_id": t.project_id,
         "uploaded_file_id": t.uploaded_file_id,
         "import_source": t.import_source,
         "is_edited": t.is_user_edited or t.is_edited,
@@ -245,13 +247,9 @@ async def upload_statement(
     contents = await file.read()
     print(f"UPLOAD: {file.filename} size={len(contents)} bank={bank_name}")
 
-    rules = db.query(TransactionRule).filter(TransactionRule.active == True).order_by(TransactionRule.priority.desc()).all()
-    user_rules = [{"match_field": r.match_field, "match_operator": r.match_operator, "match_value": r.match_value, "output_transaction_type": r.output_transaction_type, "output_category": r.output_category, "priority": r.priority} for r in rules]
-
     # Load user correction rules from merchant_rules table
     from parser import load_merchant_rules
-    merchant_correction_rules = load_merchant_rules(db)
-    user_rules = merchant_correction_rules + user_rules
+    user_rules = load_merchant_rules(db)
 
     # Create upload record
     upload_rec = UploadedFileModel(
@@ -384,10 +382,16 @@ async def upload_statement(
             is_edited=False,
             import_source=t.get("import_source", "unknown"),
         )
-        db.add(tx)
-        saved.append(tx_to_dict(tx))
-        if t.get("needs_review"):
-            review_count += 1
+        try:
+            db.add(tx)
+            db.flush()  # flush individually to catch duplicates
+            saved.append(tx_to_dict(tx))
+            if t.get("needs_review"):
+                review_count += 1
+        except Exception as dup_err:
+            db.rollback()
+            skipped_count += 1
+            continue
 
     db.commit()
 
@@ -569,6 +573,12 @@ def update_transaction(tid: int, update: TransactionUpdate, db: Session = Depend
         from fixed_classifier import classify_transaction, normalize_merchant
         from classifier import normalize_description
         import sqlalchemy as _sa
+        # Auto-set transaction_type based on category
+        if update.category == 'Transfer':
+            update.transaction_type = 'transfer'
+        elif update.category in ('Credit Card Payment', 'Payment'):
+            update.transaction_type = 'credit_card_payment'
+            update.category = 'Credit Card Payment'
         t = db.query(Transaction).filter(Transaction.id == tid).first()
         if t and t.category != update.category:
             # Save user correction to merchant_rules
@@ -585,8 +595,8 @@ def update_transaction(tid: int, update: TransactionUpdate, db: Session = Depend
                     ), {'cat': update.category, 'id': existing[0]})
                 else:
                     db.execute(_sa.text('''
-                        INSERT INTO merchant_rules (match_value, match_type, match_field, category, transaction_type, priority, source, is_active, user_id, updated_at)
-                        VALUES (:mv, 'contains', 'merchant', :cat, 'expense', 10, 'user_correction', 1, NULL, datetime('now'))
+                        INSERT INTO merchant_rules (merchant_keyword, match_value, match_type, match_field, category, transaction_type, priority, source, is_active, is_fixed, user_id, updated_at)
+                        VALUES (:mv, :mv, 'contains', 'merchant', :cat, 'expense', 10, 'user_correction', 1, 0, NULL, datetime('now'))
                     '''), {'mv': norm_merchant, 'cat': update.category})
                 db.commit()
         if t:
@@ -781,17 +791,6 @@ def get_credit_offsets_map(db):
             credit_map[key] = credit_map.get(key, 0) + c[1]
     return credit_map
 
-# ── Transaction Project Tag ──
-@app.patch("/transactions/{tid}/project")
-def tag_transaction_project(tid: int, data: dict, db: Session = Depends(get_db)):
-    import sqlalchemy as _sa
-    project_id = data.get("project_id")
-    db.execute(_sa.text(
-        "UPDATE transactions SET project_id = :pid WHERE id = :id"
-    ), {"pid": project_id, "id": tid})
-    db.commit()
-    return {"success": True}
-
 # ── Project / Goals Endpoints ──
 
 from models import Project
@@ -909,6 +908,128 @@ def calculate_project_progress(p: Project) -> dict:
         "remaining": round(remaining, 2) if remaining is not None else None,
         "on_track": on_track,
         "transaction_count": len(txns),
+    }
+
+# ── Dashboard Summary (tier-aware) ──────────────────────────────────────────
+# Contract: frontend consumes data_tier, comparison, trend_chart.
+# Reason enum: not_enough_months | no_previous_month | prev_month_incomplete
+#              | zero_baseline | stale_data
+
+from sqlalchemy import extract as _extract
+
+_COMPARABILITY_MIN_TXNS = 10
+_COMPARABILITY_MIN_FLEX = 200.0
+
+def _calendar_previous_ym(ym: str) -> str:
+    year, month = int(ym[:4]), int(ym[5:7])
+    if month == 1:
+        return f"{year - 1:04d}-12"
+    return f"{year:04d}-{month - 1:02d}"
+
+def _month_label_long(ym: str) -> str:
+    return datetime.strptime(ym, "%Y-%m").strftime("%B %Y")
+
+def _month_label_short(ym: str) -> str:
+    return datetime.strptime(ym, "%Y-%m").strftime("%b %y")
+
+def _months_with_data(db: Session) -> list:
+    rows = db.query(
+        _extract('year', Transaction.transaction_date).label('y'),
+        _extract('month', Transaction.transaction_date).label('m'),
+    ).filter(
+        Transaction.transaction_date.isnot(None),
+    ).distinct().order_by('y', 'm').all()
+    return [f"{int(r.y):04d}-{int(r.m):02d}" for r in rows]
+
+def _month_totals(db: Session, ym: str) -> dict:
+    year, month = int(ym[:4]), int(ym[5:7])
+    rows = db.query(Transaction).filter(
+        _extract('year', Transaction.transaction_date) == year,
+        _extract('month', Transaction.transaction_date) == month,
+        Transaction.transaction_type == 'expense',
+        Transaction.amount < 0,
+        Transaction.exclusion_reason.is_(None),
+    ).all()
+    flexible = 0.0
+    committed = 0.0
+    for t in rows:
+        amt = abs(t.amount or 0)
+        if t.is_fixed:
+            committed += amt
+        else:
+            flexible += amt
+    return {
+        "label": _month_label_long(ym),
+        "ym": ym,
+        "total": round(flexible + committed, 2),
+        "flexible": round(flexible, 2),
+        "committed": round(committed, 2),
+        "txn_count": len(rows),
+    }
+
+def _build_comparison(current: dict, prev, months_available: int) -> dict:
+    empty = {"delta_abs": None, "delta_pct": None, "direction": None}
+    if months_available <= 1:
+        return {"status": "unavailable", "reason": "not_enough_months",
+                "message": "Upload another month to unlock month-over-month comparison",
+                **empty}
+    if prev is None:
+        return {"status": "unavailable", "reason": "no_previous_month",
+                "message": "Previous month has no data", **empty}
+    if prev["flexible"] <= 0:
+        return {"status": "unavailable", "reason": "zero_baseline",
+                "message": "Previous month had no flexible spending", **empty}
+    if prev["txn_count"] < _COMPARABILITY_MIN_TXNS or prev["flexible"] < _COMPARABILITY_MIN_FLEX:
+        return {"status": "unavailable", "reason": "prev_month_incomplete",
+                "message": "Previous month data incomplete", **empty}
+    delta_abs = round(current["flexible"] - prev["flexible"], 2)
+    direction = "up" if delta_abs > 0 else ("down" if delta_abs < 0 else "flat")
+    delta_pct = round((delta_abs / prev["flexible"]) * 100, 1)
+    if months_available == 2:
+        return {"status": "absolute", "reason": None, "message": None,
+                "delta_abs": delta_abs, "delta_pct": None, "direction": direction}
+    return {"status": "percentage", "reason": None, "message": None,
+            "delta_abs": delta_abs, "delta_pct": delta_pct, "direction": direction}
+
+def _build_trend_chart(db: Session, months_available: list, tier: int, current_ym: str) -> dict:
+    if tier == 1:
+        return {"show": False, "reason": "not_enough_months",
+                "message": "Upload another month to unlock trends", "months": []}
+    idx = months_available.index(current_ym) if current_ym in months_available else len(months_available) - 1
+    window = months_available[max(0, idx - 5):idx + 1]
+    months = []
+    for ym in window:
+        t = _month_totals(db, ym)
+        months.append({"label": _month_label_short(ym), "ym": ym,
+                       "flexible": t["flexible"], "committed": t["committed"]})
+    return {"show": True, "reason": None, "message": None, "months": months}
+
+@app.get("/dashboard-summary")
+def get_dashboard_summary(month: Optional[str] = None, db: Session = Depends(get_db)):
+    months_available = _months_with_data(db)
+    if not months_available:
+        return {
+            "data_tier": 1, "months_available": 0,
+            "current_month": None, "previous_month": None,
+            "comparison": {"status": "unavailable", "reason": "not_enough_months",
+                           "message": "No transactions yet",
+                           "delta_abs": None, "delta_pct": None, "direction": None},
+            "trend_chart": {"show": False, "reason": "not_enough_months",
+                            "message": "Upload a statement to see your dashboard", "months": []},
+        }
+    current_ym = month if (month and month in months_available) else months_available[-1]
+    prev_ym = _calendar_previous_ym(current_ym)
+    prev_exists = prev_ym in months_available
+    current = _month_totals(db, current_ym)
+    prev = _month_totals(db, prev_ym) if prev_exists else None
+    tier = 1 if len(months_available) <= 1 else (2 if len(months_available) == 2 else 3)
+    return {
+        "data_tier": tier,
+        "months_available": len(months_available),
+        "current_month": current,
+        "previous_month": prev,
+        "comparison": _build_comparison(current, prev, len(months_available)),
+        "trend_chart": _build_trend_chart(db, months_available, tier, current_ym),
     }
 
 # ── Fixed expenses summary ──

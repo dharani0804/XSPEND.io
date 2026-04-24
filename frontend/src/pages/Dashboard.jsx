@@ -227,6 +227,7 @@ export default function Dashboard() {
   const [showAcctMenu, setShowAcctMenu] = useState(false)
   const [editingMonthlyBudget, setEditingMonthlyBudget] = useState(false)
   const [budgetInput, setBudgetInput] = useState('')
+  const [summary, setSummary] = useState(null)
   const name = localStorage.getItem('user_name') || 'Your'
 
   useEffect(() => {
@@ -347,6 +348,26 @@ export default function Dashboard() {
   const varCatMap = varExp.reduce((acc,t)=>{const c=t.category||'Other';acc[c]=(acc[c]||0)+Math.abs(t.amount);return acc},{})
   const varCatEntries = Object.entries(varCatMap).map(([name,val])=>({name,val:parseFloat(val.toFixed(2))})).sort((a,b)=>b.val-a.val)
   const varTopCat = varCatEntries[0]
+
+  useEffect(() => {
+    const url = activePeriodMonth
+      ? `http://127.0.0.1:8000/dashboard-summary?month=${activePeriodMonth}`
+      : `http://127.0.0.1:8000/dashboard-summary`
+    fetch(url).then(r=>r.json()).then(setSummary).catch(()=>setSummary(null))
+  }, [activePeriodMonth])
+
+  const comp = summary?.comparison
+  const compStatus = comp?.status
+  const compShow = compStatus === 'absolute' || compStatus === 'percentage'
+  const compUnavailableShow = compStatus === 'unavailable' && comp?.reason !== 'not_enough_months'
+  const compPrevShort = summary?.previous_month?.label?.split(' ')[0]?.slice(0,3) || 'prev'
+  const compText = !comp ? null :
+    compStatus === 'percentage' ? `${comp.delta_pct>0?'+':''}${Math.abs(comp.delta_pct).toFixed(0)}% vs ${compPrevShort}` :
+    compStatus === 'absolute'   ? `${comp.delta_abs>0?'+':'−'}$${Math.abs(Math.round(comp.delta_abs))} vs ${compPrevShort}` :
+    comp.message
+  const compColor = compShow ? (comp.direction==='up'?'#ef4444':comp.direction==='down'?'#10b981':'#94a3b8') : '#64748b'
+  const compBg    = compShow ? (comp.direction==='up'?'rgba(239,68,68,0.1)':comp.direction==='down'?'rgba(16,185,129,0.1)':'rgba(148,163,184,0.1)') : 'rgba(100,116,139,0.08)'
+  const compArrow = compShow ? (comp.direction==='up'?'↑ ':comp.direction==='down'?'↓ ':'') : ''
 
   const prevMonth = months[months.indexOf(activePeriodMonth)-1]
   const prevExp = prevMonth?txs.filter(t=>t.transaction_date?.startsWith(prevMonth)&&t.transaction_type==='expense'&&t.amount<0&&!isCardCredit(t)&&t.exclusion_reason==null).reduce((s,t)=>s+Math.abs(t.amount),0):0
@@ -576,9 +597,9 @@ export default function Dashboard() {
             <p style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1.2px',marginBottom:12}}>Total expenses</p>
             <div>
               <div style={{fontSize:32,fontWeight:800,color:'#ef4444',letterSpacing:'-1.5px',marginBottom:8,fontFamily:'monospace'}}>{fmt(totalExp)}</div>
-              {showExpChange&&(
-                <span style={{fontSize:12,padding:'4px 10px',borderRadius:8,fontWeight:700,background:expChange>0?'rgba(239,68,68,0.1)':'rgba(16,185,129,0.1)',color:expChange>0?'#ef4444':'#10b981'}}>
-                  {expChange>0?'↑':'↓'} {Math.abs(expChange).toFixed(0)}% vs {prevMonth?new Date(prevMonth+'-02').toLocaleDateString('en-US',{month:'short'}):'prev'}
+              {(compShow||compUnavailableShow)&&(
+                <span style={{fontSize:12,padding:'4px 10px',borderRadius:8,fontWeight:700,background:compBg,color:compColor}}>
+                  {compArrow}{compText}
                 </span>
               )}
               <p style={{fontSize:12,color:'#334155',marginTop:8}}>{allExp.length} transactions</p>
@@ -762,13 +783,13 @@ export default function Dashboard() {
           <div style={{...card,display:'flex',flexDirection:'column'}}>
             <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:14}}>
               <p style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1.2px'}}>Monthly trend</p>
-              {showExpChange&&(
-                <span style={{fontSize:12,fontWeight:700,color:expChange>0?'#ef4444':'#10b981',background:expChange>0?'rgba(239,68,68,0.08)':'rgba(16,185,129,0.08)',padding:'4px 10px',borderRadius:8,border:`1px solid ${expChange>0?'rgba(239,68,68,0.15)':'rgba(16,185,129,0.15)'}`}}>
-                  {expChange>0?'+':''}{expChange.toFixed(0)}% vs last month
+              {(compShow||compUnavailableShow)&&(
+                <span style={{fontSize:12,fontWeight:700,color:compColor,background:compBg,padding:'4px 10px',borderRadius:8,border:`1px solid ${compShow?(comp.direction==='up'?'rgba(239,68,68,0.15)':comp.direction==='down'?'rgba(16,185,129,0.15)':'rgba(148,163,184,0.15)'):'rgba(100,116,139,0.15)'}`}}>
+                  {compArrow}{compText}
                 </span>
               )}
             </div>
-            {trendData.length>=2?(
+            {summary?.trend_chart?.show && trendData.length>=2?(
               <div style={{flex:1,display:'flex',flexDirection:'column'}}>
                 <div style={{display:'flex',gap:16,marginBottom:12}}>
                   <div style={{display:'flex',alignItems:'center',gap:6}}><div style={{width:10,height:10,borderRadius:2,background:'#8b5cf6'}}/><span style={{fontSize:11,color:'#64748b'}}>Committed</span></div>

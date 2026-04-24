@@ -428,10 +428,468 @@ def parse_pdf_xy(pdf_bytes: bytes, bank: str) -> Tuple[List[Dict], int]:
             txs = parse_chase_xy(pdf_bytes=pdf_bytes)
         elif 'bofa' in bank_lower or 'bank of america' in bank_lower or 'bankofamerica' in bank_lower:
             txs = parse_bofa_xy(pdf_bytes=pdf_bytes)
+        elif 'discover' in bank_lower:
+            txs, _ = parse_discover_xy(pdf_bytes=pdf_bytes)
+        elif 'wells fargo' in bank_lower or 'wellsfargo' in bank_lower:
+            import io, pdfplumber
+            with pdfplumber.open(io.BytesIO(pdf_bytes)) as pdf:
+                text = pdf.pages[0].extract_text() or ''
+            if any(k in text.lower() for k in ['credit limit','minimum payment','new balance','purchases/debits']):
+                txs, _ = parse_wellsfargo_credit_xy(pdf_bytes=pdf_bytes)
+            else:
+                txs, _ = parse_wellsfargo_banking_xy(pdf_bytes=pdf_bytes)
+        elif 'macys' in bank_lower or 'macy' in bank_lower:
+            txs, _ = parse_macys_citi_xy(pdf_bytes=pdf_bytes)
         else:
             return [], 0
-        
+
         return txs, len(txs)
     except Exception as e:
         print(f"XY parser error: {e}")
+        import traceback; traceback.print_exc()
         return [], 0
+
+
+def parse_wellsfargo_credit_xy(pdf_path=None, pdf_bytes=None):
+    """Parse Wells Fargo credit card (Bilt) PDF.
+    Format: Trans Date | Post Date | Ref# | RefHash | Description | $Amount
+    """
+    import io, re
+    from collections import Counter
+    transactions = []
+    opener = pdfplumber.open(pdf_path) if pdf_path else pdfplumber.open(io.BytesIO(pdf_bytes))
+
+    # MM/DD MM/DD REFNUM REFHASH DESCRIPTION $AMOUNT
+    TX_RE = re.compile(
+        r'^(\d{2}/\d{2})\s+\d{2}/\d{2}\s+\d+\s+\S+\s+(.+?)\s+\$(-?[\d,]+\.\d{2})$'
+    )
+    SKIP = ['total fees','total interest','year-to-date','biltprotect','interest charge',
+            'fees charged','interest charged','transaction summary']
+
+    year = None
+    statement_month = None
+
+    with opener as pdf:
+        full_text = ''
+        for page in pdf.pages:
+            full_text += (page.extract_text() or '') + '\n'
+
+        # Extract year and statement month
+        years = re.findall(r'\b(20\d{2})\b', full_text)
+        if years:
+            year = Counter(years).most_common(1)[0][0]
+        m = re.search(r'Payment Due Date\s+(\d{2})/(\d{2})/(\d{4})', full_text)
+        if m:
+            statement_month = int(m.group(1))
+            year = m.group(3)
+
+        for line in full_text.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            if any(kw in line.lower() for kw in SKIP):
+                continue
+
+            match = TX_RE.match(line)
+            if not match:
+                continue
+
+            date_str = match.group(1)
+            desc = match.group(2).strip()
+            amount_str = match.group(3).replace(',', '')
+            amount = float(amount_str)
+
+            m_str, d_str = date_str.split('/')
+            tx_month = int(m_str)
+            assigned_year = year or '2026'
+            if statement_month and year:
+                stmt_m = int(statement_month)
+                tx_y = int(year)
+                if stmt_m <= 3 and tx_month >= 10:
+                    assigned_year = str(tx_y - 1)
+                elif stmt_m == 12 and tx_month <= 2:
+                    assigned_year = str(tx_y + 1)
+
+            full_date = f"{assigned_year}-{m_str.zfill(2)}-{d_str.zfill(2)}"
+
+            if amount < 0:
+                tx_type = 'card_credit'
+                final_amount = abs(amount)
+            else:
+                tx_type = 'expense'
+                final_amount = -amount
+
+            transactions.append({
+                'transaction_date': full_date,
+                'description': desc,
+                'amount': final_amount,
+                'transaction_type': tx_type,
+                'category': 'Card Credit' if tx_type == 'card_credit' else 'Other',
+                '_source': 'wf_credit_xy'
+            })
+
+    return transactions, len(transactions)
+
+
+def parse_wellsfargo_banking_xy(pdf_path=None, pdf_bytes=None):
+    """Parse Wells Fargo checking/savings banking statement."""
+    import io, re
+    transactions = []
+    opener = pdfplumber.open(pdf_path) if pdf_path else pdfplumber.open(io.BytesIO(pdf_bytes))
+
+    DATE_RE = re.compile(r'^(\d{1,2}/\d{1,2})$')
+    AMOUNT_RE = re.compile(r'^[\d,]+\.\d{2}$')
+    SKIP_KEYWORDS = ['beginning balance','ending balance','ending daily','date number',
+                     'deposits/additions','withdrawals/subtractions','transaction history',
+                     'check deposits','summary of accounts','statement period']
+
+    year = None
+
+    with opener as pdf:
+        for page in pdf.pages:
+            text = page.extract_text() or ''
+
+            # Extract year from statement date
+            if not year:
+                m = re.search(r'(January|February|March|April|May|June|July|August|September|October|November|December)\s+\d+,\s+(20\d{2})', text)
+                if m:
+                    year = m.group(2)
+                else:
+                    years = re.findall(r'\b(20\d{2})\b', text)
+                    if years:
+                        from collections import Counter
+                        year = Counter(years).most_common(1)[0][0]
+
+            words = page.extract_words(x_tolerance=3, y_tolerance=3)
+            if not words:
+                continue
+
+            rows = {}
+            for w in words:
+                y_key = round(w['top'] / 4) * 4
+                rows.setdefault(y_key, []).append(w)
+
+            for y_key in sorted(rows):
+                row_words = sorted(rows[y_key], key=lambda w: w['x0'])
+                parts = [w['text'] for w in row_words]
+                x_positions = [w['x0'] for w in row_words]
+
+                if not parts or not DATE_RE.match(parts[0]):
+                    continue
+
+                line = ' '.join(parts).lower()
+                if any(kw in line for kw in SKIP_KEYWORDS):
+                    continue
+
+                # WF banking: Date | Check# (optional) | Description | Additions | Subtractions | Balance
+                # Additions column ~x=350-420, Subtractions ~x=420-490
+                m_str, d_str = parts[0].split('/')
+                date_str = f"{year or '2026'}-{m_str.zfill(2)}-{d_str.zfill(2)}"
+
+                # Find amounts by x position
+                # Rightmost amounts are balance, second-right is debit/credit
+                amounts_with_x = []
+                desc_parts = []
+                for i, (p, x) in enumerate(zip(parts[1:], x_positions[1:]), 1):
+                    clean = p.replace(',','')
+                    if AMOUNT_RE.match(clean):
+                        amounts_with_x.append((float(clean), x))
+                    else:
+                        desc_parts.append(p)
+
+                if not amounts_with_x:
+                    continue
+
+                desc = ' '.join(desc_parts).strip()
+                if not desc or len(desc) < 3:
+                    continue
+
+                # Skip check numbers as description
+                if re.match(r'^\d{3,6}$', desc):
+                    continue
+
+                # Sort amounts by x position
+                amounts_with_x.sort(key=lambda a: a[1])
+
+                # Balance is rightmost, transaction amount is second-rightmost
+                if len(amounts_with_x) >= 2:
+                    tx_amount = amounts_with_x[-2][0]
+                    tx_x = amounts_with_x[-2][1]
+                    # If x > 400 it's likely a debit (subtraction column)
+                    is_debit = tx_x > 380
+                else:
+                    tx_amount = amounts_with_x[0][0]
+                    is_debit = True
+
+                # Classify
+                desc_lower = desc.lower()
+                if any(kw in desc_lower for kw in ['zelle to','transfer to','withdrawal','withdrwl']):
+                    tx_type = 'transfer'
+                    amount = -tx_amount
+                elif any(kw in desc_lower for kw in ['payroll','direct dep','zelle from','deposit']):
+                    tx_type = 'income'
+                    amount = tx_amount
+                elif any(kw in desc_lower for kw in ['american express','chase credit','citi payment','discover']):
+                    tx_type = 'credit_card_payment'
+                    amount = -tx_amount
+                elif is_debit:
+                    tx_type = 'expense'
+                    amount = -tx_amount
+                else:
+                    tx_type = 'income'
+                    amount = tx_amount
+
+                transactions.append({
+                    'transaction_date': date_str,
+                    'description': desc,
+                    'amount': amount,
+                    'transaction_type': tx_type,
+                    'category': 'Other',
+                    '_source': 'wf_banking_xy'
+                })
+
+    return transactions, len(transactions)
+
+
+def parse_macys_citi_xy(pdf_path=None, pdf_bytes=None):
+    """Parse Macy's/Citi credit card statement.
+    Format: Month DD | DESCRIPTION | LOCATION (CA) | $AMOUNT
+    Skip sub-lines: BAG FEE, SALES TAX, RECEIPT TOTAL, OTHER PAY TYPE
+    """
+    import io, re
+    transactions = []
+    opener = pdfplumber.open(pdf_path) if pdf_path else pdfplumber.open(io.BytesIO(pdf_bytes))
+
+    MONTHS = {'jan':1,'feb':2,'mar':3,'apr':4,'may':5,'jun':6,
+              'jul':7,'aug':8,'sep':9,'oct':10,'nov':11,'dec':12}
+
+    # Match: "Jan 03 DESCRIPTION LOCATION $AMOUNT" or "Jan 03 DESCRIPTION $AMOUNT"
+    TX_RE = re.compile(
+        r'^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)\s+(\d{1,2})\s+(.+?)\s+(-?\$[\d,]+\.\d{2})$',
+        re.IGNORECASE
+    )
+
+    SKIP_LINES = ['bag fee','sales tax','receipt total','other pay type','total fees',
+                  'total interest','year-to-date','total card ending','transaction date',
+                  'macy\'s transactions','fees charged','interest charged','activity and',
+                  'promotion','this page intentionally']
+
+    SKIP_DESC = ['payment - thank you', 'total fees', 'total interest']
+
+    year = None
+
+    with opener as pdf:
+        full_text = '\n'.join(p.extract_text() or '' for p in pdf.pages)
+
+        # Extract year from due date
+        m = re.search(r'Payment Due Date\s+\w+\s+\d+,\s+(\d{4})', full_text)
+        if m:
+            year = m.group(1)
+        else:
+            years = re.findall(r'\b(20\d{2})\b', full_text)
+            if years:
+                from collections import Counter
+                year = Counter(years).most_common(1)[0][0]
+
+        stmt_month = None
+        m2 = re.search(r'Payment Due Date\s+(\w+)\s+\d+,\s+\d{4}', full_text)
+        if m2:
+            stmt_month = MONTHS.get(m2.group(1).lower()[:3])
+
+        for line in full_text.split('\n'):
+            line = line.strip()
+            if not line:
+                continue
+            if any(kw in line.lower() for kw in SKIP_LINES):
+                continue
+
+            match = TX_RE.match(line)
+            if not match:
+                continue
+
+            month_str = match.group(1).lower()[:3]
+            day = match.group(2)
+            desc = match.group(3).strip()
+            amount_str = match.group(4).replace('$','').replace(',','')
+            amount = float(amount_str)
+
+            if any(kw in desc.lower() for kw in SKIP_DESC):
+                # CC payments
+                if 'payment' in desc.lower():
+                    tx_month = MONTHS[month_str]
+                    assigned_year = year or '2026'
+                    if stmt_month and year:
+                        if int(stmt_month) <= 3 and tx_month >= 10:
+                            assigned_year = str(int(year) - 1)
+                    full_date = f"{assigned_year}-{str(MONTHS[month_str]).zfill(2)}-{day.zfill(2)}"
+                    transactions.append({
+                        'transaction_date': full_date,
+                        'description': desc,
+                        'amount': amount,  # negative = payment
+                        'transaction_type': 'credit_card_payment',
+                        'category': 'Credit Card Payment',
+                        '_source': 'macys_citi_xy'
+                    })
+                continue
+
+            # Remove location suffix like "VALLEY FAIR (CA)" from description
+            desc_clean = re.sub(r'\s+[A-Z\s]+\([A-Z]{2}\)$', '', desc).strip()
+            if not desc_clean:
+                desc_clean = desc
+
+            tx_month = MONTHS[month_str]
+            assigned_year = year or '2026'
+            if stmt_month and year:
+                if int(stmt_month) <= 3 and tx_month >= 10:
+                    assigned_year = str(int(year) - 1)
+                elif int(stmt_month) == 12 and tx_month <= 2:
+                    assigned_year = str(int(year) + 1)
+
+            full_date = f"{assigned_year}-{str(tx_month).zfill(2)}-{day.zfill(2)}"
+
+            tx_type = 'expense' if amount > 0 else 'card_credit'
+            final_amount = -amount if tx_type == 'expense' else abs(amount)
+
+            transactions.append({
+                'transaction_date': full_date,
+                'description': desc_clean,
+                'amount': final_amount,
+                'transaction_type': tx_type,
+                'category': 'Card Credit' if tx_type == 'card_credit' else 'Other',
+                '_source': 'macys_citi_xy'
+            })
+
+    return transactions, len(transactions)
+
+
+def decode_discover(s: str) -> str:
+    """Decode Discover's custom font encoding (offset = 29)."""
+    return ''.join(chr(ord(c) + 29) if 0 < ord(c) < 127 else c for c in s)
+
+
+def parse_discover_xy(pdf_path=None, pdf_bytes=None):
+    """Parse Discover credit card PDF using custom font decoder."""
+    import io, re
+    from collections import Counter
+    transactions = []
+    opener = pdfplumber.open(pdf_path) if pdf_path else pdfplumber.open(io.BytesIO(pdf_bytes))
+
+    SKIP = ['previous balance','total fees for this period','total interest for this period',
+            'redeemed this period','earned this period','fees and interest charged',
+            'cashback bonus balance','year-to-date','interest charge calculation']
+
+    DATE_RE = re.compile(r'^\d{2}/\d{2}$')
+    AMOUNT_RE = re.compile(r'^-?\$[\d,]+\.\d{2}$')
+
+    year = None
+    statement_month = None
+
+    with opener as pdf:
+        for page in pdf.pages:
+            words = page.extract_words(x_tolerance=3, y_tolerance=3)
+            if not words:
+                continue
+
+            # Decode all words
+            decoded_words = []
+            for w in words:
+                decoded = decode_discover(w['text'])
+                decoded_words.append({**w, 'text': decoded})
+
+            # Extract year from decoded text
+            full_text = ' '.join(w['text'] for w in decoded_words)
+            if not year:
+                years = re.findall(r'\b(20\d{2})\b', full_text)
+                if years:
+                    year = Counter(years).most_common(1)[0][0]
+            if not statement_month:
+                m = re.search(r'OPEN TO CLOSE DATE\s*(\d{2})/\d{2}/(\d{4})\s*-\s*(\d{2})/\d{2}/(\d{4})', full_text)
+                if m:
+                    statement_month = int(m.group(3))
+                    year = m.group(4)
+
+            # Group by y position
+            rows = {}
+            for w in decoded_words:
+                y_key = round(w['top'] / 5) * 5
+                rows.setdefault(y_key, []).append(w)
+
+            for y_key in sorted(rows):
+                parts = [w['text'] for w in sorted(rows[y_key], key=lambda w: w['x0'])]
+                line = ' '.join(parts).strip()
+
+                if not parts or not DATE_RE.match(parts[0]):
+                    continue
+                if any(kw in line.lower() for kw in SKIP):
+                    continue
+
+                # Join split amounts like ['-$14', '.13'] -> '-$14.13'
+                joined_parts = []
+                i = 0
+                while i < len(parts):
+                    p = parts[i]
+                    # Check if next part is a decimal continuation
+                    if i + 1 < len(parts) and re.match(r'^[.]\d{2}$', parts[i+1]):
+                        joined_parts.append(p + parts[i+1])
+                        i += 2
+                    else:
+                        joined_parts.append(p)
+                        i += 1
+                parts = joined_parts
+
+                # Find amount — last token matching $X.XX
+                amount = None
+                desc_parts = []
+                SKIP_CATS = ['services','merchandise','restaurants','travel','automotive',
+                             'cashback bonus','% cashback']
+                for p in parts[1:]:
+                    if AMOUNT_RE.match(p):
+                        amount = float(p.replace('$','').replace(',',''))
+                    elif not any(cat in p.lower() for cat in SKIP_CATS):
+                        desc_parts.append(p)
+
+                if amount is None:
+                    continue
+
+                desc = ' '.join(desc_parts).strip()
+                # Remove location suffix, phone numbers, extra noise
+                desc = re.sub(r'\s+[A-Z]{2}$', '', desc).strip()
+                desc = re.sub(r'\s+\d{3}-\d{3}-\d{4}.*$', '', desc).strip()
+                desc = re.sub(r'\s+\d{6,}.*$', '', desc).strip()  # remove long number sequences
+                desc = re.sub(r'\s+\d{3,}\s*[A-Z]{2}$', '', desc).strip()  # "454 CA"
+                desc = re.sub(r'\s+\+\$[\d.]+$', '', desc).strip()  # "+$1.43" cashback
+                desc = re.sub(r'\s{2,}', ' ', desc).strip()  # double spaces
+
+                if not desc or len(desc) < 2:
+                    continue
+
+                m_str, d_str = parts[0].split('/')
+                tx_month = int(m_str)
+                assigned_year = year or '2026'
+                if statement_month and year:
+                    stmt_m = int(statement_month)
+                    tx_y = int(year)
+                    if stmt_m <= 3 and tx_month >= 10:
+                        assigned_year = str(tx_y - 1)
+                    elif stmt_m == 12 and tx_month <= 2:
+                        assigned_year = str(tx_y + 1)
+
+                full_date = f"{assigned_year}-{m_str.zfill(2)}-{d_str.zfill(2)}"
+
+                if amount < 0:
+                    tx_type = 'credit_card_payment'
+                    final_amount = amount
+                else:
+                    tx_type = 'expense'
+                    final_amount = -amount
+
+                transactions.append({
+                    'transaction_date': full_date,
+                    'description': desc,
+                    'amount': final_amount,
+                    'transaction_type': tx_type,
+                    'category': 'Other',
+                    '_source': 'discover_xy'
+                })
+
+    return transactions, len(transactions)

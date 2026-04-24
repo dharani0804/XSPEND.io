@@ -290,6 +290,8 @@ export default function Upload() {
       ? `http://127.0.0.1:8000/upload?bank_name=${encodeURIComponent(bank)}`
       : 'http://127.0.0.1:8000/upload'
     try {
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 120000)  // 2 min timeout
       const res = await fetch(url, { method:'POST', body:fd })
       const data = await res.json()
       if (data.success) {
@@ -300,7 +302,7 @@ export default function Upload() {
         return []
       }
     } catch(e) {
-      setFileQueue(p => p.map(f => f.id === entry.id ? {...f, status:FILE_STATES.error, error:'Connection failed'} : f))
+      setFileQueue(p => p.map(f => f.id === entry.id ? {...f, status:FILE_STATES.error, error:'Upload timed out — but transactions may have been saved. Check your dashboard.'} : f))
       return []
     }
   }
@@ -439,8 +441,8 @@ export default function Upload() {
       )}
 
       <div style={{ marginBottom:24 }}>
-        <h1 style={{ fontSize:22, fontWeight:600, color:'#fff', marginBottom:4 }}>Upload your statements</h1>
-        <p style={{ color:'#6a6a8a', fontSize:13 }}>Drop your bank statements and we will handle the rest</p>
+        <h1 style={{ fontSize:22, fontWeight:600, color:'#fff', marginBottom:4 }}>Upload your bank statement or transaction file</h1>
+        <p style={{ color:'#6a6a8a', fontSize:13 }}>We support PDF, CSV, XLSX, OFX, and QFX · <span style={{color:'#3b82f6'}}>Best results: CSV, OFX, or QFX</span></p>
       </div>
 
 
@@ -460,8 +462,8 @@ export default function Upload() {
           >
             <div style={{ fontSize:36, marginBottom:12 }}>📎</div>
             <p style={{ color:'#fff', fontWeight:600, fontSize:15, marginBottom:6 }}>Drop files here or click to browse</p>
-            <p style={{ color:'#4a4a6a', fontSize:12, marginBottom:8 }}>CSV · PDF · XLSX · XLS · OFX · QFX</p>
-            <p style={{ color:'#2563eb', fontSize:11, fontWeight:500 }}>Any bank · any format · uploads automatically</p>
+            <p style={{ color:'#4a4a6a', fontSize:12, marginBottom:8 }}>PDF · CSV · XLSX · XLS · OFX · QFX</p>
+            <p style={{ color:'#2563eb', fontSize:11, fontWeight:500 }}>Any bank · any format · we handle the rest</p>
             <input id="multiFileInput" type="file" accept=".pdf,.csv,.xlsx,.xls,.ofx,.qfx" multiple style={{ display:'none' }} onChange={e => addFiles(e.target.files)}/>
           </div>
 
@@ -484,7 +486,11 @@ export default function Upload() {
                         {(entry.file.size/1024).toFixed(1)} KB · {entry.file.name.split('.').pop().toUpperCase()}
                         {entry.result && <span style={{ color:'#0d9268', marginLeft:8 }}>✓ {entry.result.transactions_imported} imported{entry.result.skipped_duplicates>0?`, ${entry.result.skipped_duplicates} duplicate${entry.result.skipped_duplicates>1?'s':''} skipped${entry.result.skipped_merchants?.length?' ('+entry.result.skipped_merchants.slice(0,2).join(', ')+(entry.result.skipped_merchants.length>2?'…':'')+')':''}`:''}</span>}
                         {entry.result?.bank_source && entry.result.bank_source !== 'Unknown Bank' && <span style={{ color:'#8888aa', marginLeft:8 }}>🏦 {entry.result.bank_source}</span>}
-                        {entry.error && <span style={{ color:'#c81e1e', marginLeft:8 }}>✗ {entry.error}</span>}
+                        {entry.error && (
+                          <span style={{ color:'#ef4444', marginLeft:8, display:'block', marginTop:4, fontSize:11, lineHeight:1.5 }}>
+                            ✗ {entry.error}
+                          </span>
+                        )}
                       </p>
                     </div>
                     {entry.status === FILE_STATES.waiting && (
@@ -503,10 +509,15 @@ export default function Upload() {
               </div>
 
               {fileQueue.some(f => f.status === FILE_STATES.done) && !processing && (
-                <div style={{ marginTop:12, background:'#0a0a0f', border:'1px solid #1e1e2e', borderRadius:10, padding:'10px 16px', display:'flex', gap:20, flexWrap:'wrap' }}>
+                <div style={{ marginTop:12, background:'#0a0a0f', border:'1px solid #1e1e2e', borderRadius:10, padding:'10px 16px', display:'flex', gap:20, flexWrap:'wrap', alignItems:'center' }}>
                   <span style={{ color:'#0d9268', fontSize:13, fontWeight:600 }}>✓ {totalImported} transactions imported</span>
                   {totalSkipped > 0 && <span style={{ color:'#6a6a8a', fontSize:12 }}>{totalSkipped} duplicates skipped</span>}
                   <span style={{ color:'#6a6a8a', fontSize:12 }}>across {fileQueue.filter(f=>f.status===FILE_STATES.done).length} file{fileQueue.filter(f=>f.status===FILE_STATES.done).length>1?'s':''}</span>
+                  {fileQueue.some(f => f.status === FILE_STATES.error) && (
+                    <span style={{ color:'#f59e0b', fontSize:11, marginLeft:'auto' }}>
+                      💡 Some files failed — try CSV or OFX for better results
+                    </span>
+                  )}
                 </div>
               )}
             </div>
