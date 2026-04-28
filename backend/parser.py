@@ -660,6 +660,30 @@ def parse_excel(file_bytes: bytes, bank_hint: str = None) -> tuple:
 
         df.columns = [str(c).strip() for c in df.columns]
 
+        # Content-based bank detection — runs only if filename detection failed.
+        # Scans the first 8 rows (incl. column names) for bank-specific markers.
+        if not bank_hint:
+            BANK_MARKERS = {
+                'Amex': ['platinum card', 'gold card', 'american express',
+                         'amex everyday', 'blue cash'],
+                'Chase': ['chase ink', 'chase sapphire', 'chase freedom',
+                          'jpmorgan chase'],
+                'BofA': ['bank of america', 'bofa'],
+                'Wells Fargo': ['wells fargo', 'wellsfargo'],
+                'Discover': ['discover it', 'discover card'],
+                'Citi': ['citibank', 'citi double cash', 'citi premier'],
+            }
+            sniff_text = ' '.join(str(c).lower() for c in df.columns)
+            for i in range(min(8, len(df))):
+                sniff_text += ' ' + ' '.join(
+                    str(v).lower() for v in df.iloc[i].values if v is not None
+                )
+            for bank_name, markers in BANK_MARKERS.items():
+                if any(m in sniff_text for m in markers):
+                    bank_hint = bank_name
+                    print(f'  Excel sniff: detected {bank_name}')
+                    break
+
         # Detect toll account export
         col_lower = [c.lower() for c in df.columns]
         if any('tolltag' in c for c in col_lower):
@@ -697,7 +721,13 @@ def parse_excel(file_bytes: bytes, bank_hint: str = None) -> tuple:
             if not desc or desc == 'nan':
                 continue
             amount = None
-            if 'debit' in col_map and 'credit' in col_map:
+            # Prefer single 'amount' column when both are present
+            # (detect_csv_columns may falsely map debit/credit due to substring matching)
+            has_real_debit_credit = (
+                'debit' in col_map and 'credit' in col_map
+                and 'amount' not in col_map
+            )
+            if has_real_debit_credit:
                 debit = normalize_amount(row.get(col_map['debit'], ''))
                 credit = normalize_amount(row.get(col_map['credit'], ''))
                 if debit and debit != 0:

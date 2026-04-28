@@ -279,12 +279,12 @@ RAW_CATEGORY_PATTERNS = [
     (r'\b(at.?t|verizon|comcast|xfinity|t.?mobile|sprint|'
      r'pg.?e|con.?ed|city.?light|duke.?energy|dominion|centerpoint|'
      r'spectrum|cox|fios|optimum|mediacom|frontier.?comm|windstream|'
-     r'centurylink|lumen|consolidated.?comm|sparklight|astound)\b', 4, 'Rent & Utilities'),
+     r'centurylink|lumen|consolidated.?comm|sparklight|astound)\b', 4, 'Bills & Utilities'),
     (r'\b(electric|electricity|utility|utilities|water.?bill|sewer|'
-     r'gas.?bill|natural.?gas|internet|cable|broadband|wifi)\b', 4, 'Rent & Utilities'),
-    (r'\b(phone.?bill|mobile.?bill|wireless.?bill|cell.?phone.?bill)\b', 3, 'Rent & Utilities'),
+     r'gas.?bill|natural.?gas|internet|cable|broadband|wifi)\b', 4, 'Bills & Utilities'),
+    (r'\b(phone.?bill|mobile.?bill|wireless.?bill|cell.?phone.?bill)\b', 3, 'Bills & Utilities'),
     (r'\b(seattle.?city.?light|puget.?sound.?energy|pse|scl.?util|'
-     r'seattle.?util|king.?county.?util|water.?sewer|city.?util)\b', 4, 'Rent & Utilities'),
+     r'seattle.?util|king.?county.?util|water.?sewer|city.?util)\b', 4, 'Bills & Utilities'),
 
     # ── Subscriptions ──
     (r'\b(netflix|hulu|disney.?plus|hbo.?max|paramount.?plus|peacock|'
@@ -410,11 +410,11 @@ RAW_CATEGORY_PATTERNS = [
 
     # ── Rent / Housing ──
     (r'\b(rent|lease|apt|apartment|property.?management|realty|'
-     r'hoa|condo.?assoc|homeowner.?assoc|housing|landlord)\b', 5, 'Rent & Utilities'),
+     r'hoa|condo.?assoc|homeowner.?assoc|housing|landlord)\b', 5, 'Bills & Utilities'),
     (r'\b(mortgage|mtg|lakeview|quicken.?loan|rocket.?mortgage|nationstar|'
      r'mr.?cooper|freedom.?mortgage|pennymac|loandepot|'
-     r'caliber.?home|united.?wholesale|guild.?mortgage)\b', 5, 'Rent & Utilities'),
-    (r'\bfs.?pay.?hoa\b|\bhoa.?payment\b|\bhomeowner.?dues\b', 5, 'Rent & Utilities'),
+     r'caliber.?home|united.?wholesale|guild.?mortgage)\b', 5, 'Bills & Utilities'),
+    (r'\bfs.?pay.?hoa\b|\bhoa.?payment\b|\bhomeowner.?dues\b', 5, 'Bills & Utilities'),
 
     # ── Government / Taxes ──
     (r'\b(irs|tax.?payment|property.?tax|state.?tax|franchise.?tax|'
@@ -438,7 +438,7 @@ RAW_CATEGORY_PATTERNS = [
     # ── SaaS & Tools ──
     (r'\b(openai|figma|notion|slack|github|linear|vercel|heroku|aws|'
      r'digitalocean|atlassian|jira|hubspot|salesforce|intercom|'
-     r'stripe|twilio|sendgrid|cloudflare)\b', 3, 'SaaS & Tools'),
+     r'stripe|twilio|sendgrid|cloudflare)\b', 3, 'Subscriptions'),
 ]
 
 # Precompile all category patterns
@@ -449,8 +449,8 @@ COMPILED_CATEGORY_PATTERNS = [
 
 # Categories that suggest recurring behavior (hint only — not final)
 RECURRING_HINT_CATEGORIES = {
-    'Subscriptions', 'Rent & Utilities', 'Insurance',
-    'Rent & Utilities', 'Baby & Kids', 'SaaS & Tools'
+    'Subscriptions', 'Bills & Utilities', 'Insurance',
+    'Bills & Utilities', 'Baby & Kids', 'Subscriptions'
 }
 
 # ── 5. HELPER FUNCTIONS ───────────────────────────────────────────────────────
@@ -678,7 +678,7 @@ def resolve_ambiguity(normalized: str, merchant: str, scores: Dict[str, float]) 
         if any(k in normalized for k in ['youtube premium', 'youtube tv', 'google one', 'google play']):
             scores['Subscriptions'] = scores.get('Subscriptions', 0) + 4
         elif 'google ads' in normalized or 'google cloud' in normalized:
-            scores['SaaS & Tools'] = scores.get('SaaS & Tools', 0) + 4
+            scores['Subscriptions'] = scores.get('Subscriptions', 0) + 4
             scores['Subscriptions'] = max(0, scores.get('Subscriptions', 0) - 2)
 
     # ── Walmart / Target ──
@@ -884,7 +884,7 @@ def classify_with_meta(
         elif tx_type == 'cash':
             category = 'Cash & ATM'
         elif tx_type == 'reimbursement':
-            category = 'Reimbursement'
+            category = 'Refund'
         else:
             category = 'Other'
 

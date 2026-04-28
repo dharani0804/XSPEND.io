@@ -162,16 +162,26 @@ def seed_default_categories(db):
     if db.query(Category).filter(Category.is_system_default == True).count() > 0:
         return
     defaults = [
+        # Core expense categories
         ("Food & Dining","expense"),("Groceries","expense"),
         ("Transport","expense"),("Bills & Utilities","expense"),
         ("Subscriptions","expense"),("Health","expense"),
         ("Shopping","expense"),("Entertainment","expense"),
         ("Travel","expense"),("Personal Care","expense"),
         ("Pets","expense"),("Education","expense"),
+        # Added — match classifier emissions (29 canonical categories total)
+        ("Alcohol & Liquor","expense"),("Baby & Kids","expense"),
+        ("Bank Fees","expense"),("Cash & ATM","expense"),
+        ("Gifts & Donations","expense"),("Government & Taxes","expense"),
+        ("Home Improvement","expense"),("Insurance","expense"),
+        ("Professional Services","expense"),
+        # Income / transfers / payments / misc
         ("Salary","income"),("Other Income","income"),
         ("Transfer","transfer"),("Credit Card Payment","transfer"),
-        ("Loan Payment","debt"),("Debt Payment","debt"),
-        ("Refund","refund"),("Other","expense"),
+        ("Card Credit","transfer"),
+        ("Loan Payment","debt"),
+        ("Refund","refund"),
+        ("Other","expense"),
     ]
     for i,(name,group) in enumerate(defaults):
         db.add(Category(
