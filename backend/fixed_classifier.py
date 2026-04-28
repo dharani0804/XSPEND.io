@@ -200,7 +200,42 @@ def amount_signal(amount: float, all_amounts: list) -> tuple:
         return 'fixed', 0.55
     return 'unknown', 0.0
 
+# ── Keyword-based fixed override ──────────────────────────────────────────
+# These merchants are recurring subscriptions/memberships even on first sight,
+# without needing multi-month amount-pattern detection. Patterns mirror
+# classifier.py's membership-subscription block — keep both in sync.
+import re as _re_kf
+
+KEYWORD_FIXED_PATTERNS = [
+    _re_kf.compile(r'\bwalmart\+?\s*member\b|\bwmt\s*plus\b|\bwmt\+\b', _re_kf.I),
+    _re_kf.compile(r'\bcostco\s*(?:membership|annual\s*fee|renewal|connect)\b', _re_kf.I),
+    _re_kf.compile(r"\bsam'?s?\s*club\s*(?:membership|annual\s*fee|renewal)\b", _re_kf.I),
+    _re_kf.compile(r"\bbj'?s?\s*(?:wholesale|membership|annual\s*fee)\b", _re_kf.I),
+    _re_kf.compile(r'\b(?:amazon|amzn)\s*prime\b|\bprime\s*membership\b', _re_kf.I),
+    _re_kf.compile(r'\bapple\s*one\b|\bicloud\+?\b', _re_kf.I),
+    _re_kf.compile(r'\btarget\s*circle\s*360\b|\bshipt\s*membership\b', _re_kf.I),
+    # Streaming/utilities/etc — almost always fixed when seen
+    _re_kf.compile(r'\b(?:netflix|hulu|disney\+?|hbo\s*max|spotify|youtube\s*premium)\b', _re_kf.I),
+    _re_kf.compile(r'\bapple\.com/bill\b', _re_kf.I),
+]
+
+def is_keyword_fixed(description: str) -> bool:
+    """Returns True if description matches a known recurring-subscription pattern."""
+    if not description:
+        return False
+    return any(p.search(description) for p in KEYWORD_FIXED_PATTERNS)
+
 def classify_transaction(tx: dict, all_transactions: list) -> dict:
+    # Keyword override: known recurring-subscription merchants bypass heuristics.
+    # These are fixed even on first upload (no multi-month history needed).
+    if is_keyword_fixed(tx.get('description', '')):
+        return {
+            'is_fixed': True,
+            'confidence': 0.95,
+            'source': 'keyword_override',
+            'label': 'fixed',
+        }
+
     merchant_key = normalize_merchant(tx.get('description', ''))
     cat_label, cat_conf = category_signal(tx.get('category', ''))
     rec_label, rec_conf = recurrence_signal(merchant_key, all_transactions)

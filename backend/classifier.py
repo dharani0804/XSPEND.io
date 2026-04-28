@@ -301,6 +301,18 @@ RAW_CATEGORY_PATTERNS = [
      r'atlassian|jira|hubspot|salesforce)\b', 3, 'Subscriptions'),
     (r'\b(clearme|clear.?plus|tsa.?pre.?check.?member)\b', 4, 'Subscriptions'),
     (r'apple\.com/bill|itunes|google\*.*one|youtube\s*premium', 5, 'Subscriptions'),
+    # ── Membership-style subscriptions (look like retail, are recurring) ──
+    # Higher priority than retail rules so Walmart+, Costco membership, etc don't
+    # fall into Shopping/Groceries based on the parent merchant name.
+    (r'\bwalmart\+?\s*member\b|\bwmt\s*plus\b|\bwmt\+\b', 6, 'Subscriptions'),
+    (r'\bcostco\s*(?:membership|annual\s*fee|renewal|connect)\b', 6, 'Subscriptions'),
+    (r"\bsam'?s?\s*club\s*(?:membership|annual\s*fee|renewal)\b", 6, 'Subscriptions'),
+    (r"\bbj'?s?\s*(?:wholesale|membership|annual\s*fee)\b", 6, 'Subscriptions'),
+    (r'\b(?:amazon|amzn)\s*prime\b|\bprime\s*membership\b', 6, 'Subscriptions'),
+    (r'\bapple\s*one\b|\bicloud\+?\b', 6, 'Subscriptions'),
+    (r'\btarget\s*circle\s*360\b|\bshipt\s*membership\b', 6, 'Subscriptions'),
+    # Catch the standalone word 'member' as a subscription signal — low priority,
+    # so specific retail rules above can still win when relevant.
     (r'\b(subscription|membership|auto.?renew|monthly.?plan|annual.?plan)\b', 2, 'Subscriptions'),
     (r'\b(kindle|kindle.?unlimited|audible)\b', 4, 'Subscriptions'),
 

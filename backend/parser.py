@@ -905,6 +905,75 @@ def load_merchant_rules(db) -> list:
     except:
         return []
 
+# ── Canonical categories (must match models.py seed) ──
+CANONICAL_CATEGORIES = {
+    "Food & Dining", "Groceries", "Transport", "Bills & Utilities",
+    "Subscriptions", "Health", "Shopping", "Entertainment", "Travel",
+    "Personal Care", "Pets", "Education", "Loan Payment",
+    "Credit Card Payment", "Refund", "Salary", "Other Income",
+    "Transfer", "Other", "Alcohol & Liquor", "Baby & Kids",
+    "Bank Fees", "Card Credit", "Cash & ATM", "Gifts & Donations",
+    "Government & Taxes", "Home Improvement", "Insurance",
+    "Professional Services",
+}
+
+# ── Bank-supplied category translations ──
+# Maps raw values from bank statement Category columns to our canonical set.
+# Unmapped values fall back to "Other" — and override won't fire on Other.
+BANK_CATEGORY_MAP = {
+    # Chase CSV
+    "Food & Drink": "Food & Dining",
+    "Gas": "Transport",
+    "Automotive": "Transport",
+    "Health & Wellness": "Health",
+    "Personal": "Personal Care",
+    "Bills & Utilities": "Bills & Utilities",
+    "Shopping": "Shopping",
+    "Groceries": "Groceries",
+    "Travel": "Travel",
+    "Entertainment": "Entertainment",
+    "Education": "Education",
+    "Professional Services": "Professional Services",
+    "Fees & Adjustments": "Bank Fees",
+    "Gifts & Donations": "Gifts & Donations",
+    # Amex xlsx — uses "Group-Subgroup" format
+    "Restaurant-Restaurant": "Food & Dining",
+    "Restaurant-Bar & Cafe": "Food & Dining",
+    "Restaurant-Fast Food": "Food & Dining",
+    "Merchandise & Supplies-Internet Purchase": "Shopping",
+    "Merchandise & Supplies-Department Store": "Shopping",
+    "Merchandise & Supplies-Wholesale Stores": "Shopping",
+    "Merchandise & Supplies-Groceries": "Groceries",
+    "Merchandise & Supplies-Pharmacies": "Health",
+    "Fees & Adjustments-Fees & Adjustments": "Bank Fees",
+    "Transportation-Fuel": "Transport",
+    "Transportation-Auto Services": "Transport",
+    "Transportation-Travel": "Travel",
+    "Transportation-Other Transportation": "Transport",
+    "Travel-Airline": "Travel",
+    "Travel-Lodging": "Travel",
+    "Travel-Other Travel": "Travel",
+    "Entertainment-General Attractions": "Entertainment",
+    "Entertainment-Theatrical Events": "Entertainment",
+    "Communications-Cellular Phone": "Bills & Utilities",
+    "Communications-Cable & Internet Comm": "Bills & Utilities",
+    # Pass-through canonical names
+    "Food & Dining": "Food & Dining",
+    "Other": "Other",
+}
+
+def canonicalize_bank_category(raw: str) -> str:
+    """Snap a bank-supplied category to canonical, else 'Other'."""
+    if not raw:
+        return "Other"
+    raw = raw.strip()
+    if raw in BANK_CATEGORY_MAP:
+        return BANK_CATEGORY_MAP[raw]
+    if raw in CANONICAL_CATEGORIES:
+        return raw
+    return "Other"
+
+
 def enrich_transaction(tx: dict, user_rules: list = None) -> dict:
     # If XY parser already classified as card_credit — trust it
     if tx.get('_source','').endswith('_xy') and tx.get('transaction_type') == 'card_credit':
@@ -943,10 +1012,14 @@ def enrich_transaction(tx: dict, user_rules: list = None) -> dict:
     if type_hint and type_hint != 'unknown' and confidence != 'high':
         tx_type = type_hint
         confidence = 'high'
-    # Use CSV category hint if AI classifier is uncertain
+    # Use bank-supplied category hint if classifier is uncertain — but ONLY if
+    # the hint maps to a canonical category. Bank-specific names ("Food & Drink",
+    # "Gas") get translated; unknown names fall through (no override).
     if tx.get('raw_category') and tx_type == 'expense' and confidence != 'high':
-        category = tx['raw_category']
-        confidence = 'medium'
+        bank_cat = canonicalize_bank_category(tx['raw_category'])
+        if bank_cat != 'Other':
+            category = bank_cat
+            confidence = 'medium'
 
     # Use external_transaction_id for better dedup when available
     ext_id = tx.get('external_transaction_id', '')
