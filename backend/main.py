@@ -952,12 +952,39 @@ def _month_totals(db: Session, ym: str) -> dict:
     ).all()
     flexible = 0.0
     committed = 0.0
+    flex_by_category = {}            # name -> {"amount": ..., "count": ...}
+    biggest = None                   # tracks the largest single flexible charge
+
     for t in rows:
         amt = abs(t.amount or 0)
         if t.is_fixed:
             committed += amt
         else:
             flexible += amt
+            cat = t.category or "Other"
+            entry = flex_by_category.setdefault(cat, {"amount": 0.0, "count": 0})
+            entry["amount"] += amt
+            entry["count"] += 1
+            if biggest is None or amt > biggest["amount"]:
+                biggest = {
+                    "merchant": (t.description or "").strip()[:80] or "Unknown",
+                    "amount": round(amt, 2),
+                    "date": str(t.transaction_date) if t.transaction_date else None,
+                    "category": cat,
+                }
+
+    # Pick top category by flexible spend
+    top_category = None
+    if flex_by_category:
+        name, info = max(flex_by_category.items(), key=lambda kv: kv[1]["amount"])
+        pct = (info["amount"] / flexible * 100) if flexible > 0 else 0
+        top_category = {
+            "name": name,
+            "amount": round(info["amount"], 2),
+            "pct_of_flexible": round(pct, 1),
+            "txn_count": info["count"],
+        }
+
     return {
         "label": _month_label_long(ym),
         "ym": ym,
@@ -965,6 +992,8 @@ def _month_totals(db: Session, ym: str) -> dict:
         "flexible": round(flexible, 2),
         "committed": round(committed, 2),
         "txn_count": len(rows),
+        "top_category": top_category,
+        "biggest_charge": biggest,
     }
 
 def _build_comparison(current: dict, prev, months_available: int) -> dict:
