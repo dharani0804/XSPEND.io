@@ -603,149 +603,63 @@ export default function Dashboard() {
 
         </div>
 
+        {/* DISCRETIONARY vs FIXED — Section 2 */}
+        {summary?.current_month && (() => {
+          const cm = summary.current_month
+          const total = cm.total || 0
+          const disc = cm.flexible || 0
+          const fix = cm.committed || 0
+          if (total <= 0) return null
+          const dPct = Math.round((disc / total) * 100)
+          const fPct = 100 - dPct
+          const copy = (
+            dPct >= 85 ? 'Most of your spending was discretionary this month.' :
+            dPct >= 60 ? `Your spending was mostly discretionary — ${dPct}% this month.` :
+            dPct >= 40 ? 'Your spending was evenly split between discretionary and fixed.' :
+            dPct >= 15 ? 'Most of your spending was fixed costs this month.' :
+                         'Almost all of your spending was fixed costs this month.'
+          )
+          return (
+            <div style={{background:'#0f1117',border:'1px solid #1e2030',borderRadius:18,padding:'24px 26px',marginBottom:14}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:18}}>
+                <p style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1.2px'}}>
+                  Discretionary vs Fixed
+                </p>
+                <span style={{fontSize:12,color:'#475569'}}>
+                  {fmt(total)} total · {cm.label}
+                </span>
+              </div>
+
+              <div style={{display:'flex',height:14,borderRadius:99,overflow:'hidden',marginBottom:14,background:'#1a1f2e',gap:2}}>
+                <div style={{width:dPct+'%',background:'linear-gradient(90deg,#3b82f6,#6366f1)',transition:'width 0.5s',borderRadius:99}}/>
+                <div style={{width:fPct+'%',background:'#475569',transition:'width 0.5s',borderRadius:99}}/>
+              </div>
+
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:14,flexWrap:'wrap',gap:8}}>
+                <div>
+                  <span style={{display:'inline-block',width:8,height:8,borderRadius:2,background:'#6366f1',marginRight:8,verticalAlign:'middle'}}/>
+                  <span style={{fontSize:14,fontWeight:700,color:'#cbd5e1'}}>Discretionary</span>
+                  <span style={{fontSize:14,color:'#10b981',fontFamily:'monospace',fontWeight:700,marginLeft:10}}>{fmt(disc)}</span>
+                  <span style={{fontSize:13,color:'#64748b',marginLeft:8}}>· {dPct}%</span>
+                </div>
+                <div style={{textAlign:'right'}}>
+                  <span style={{display:'inline-block',width:8,height:8,borderRadius:2,background:'#475569',marginRight:8,verticalAlign:'middle'}}/>
+                  <span style={{fontSize:14,fontWeight:700,color:'#cbd5e1'}}>Fixed</span>
+                  <span style={{fontSize:14,color:'#10b981',fontFamily:'monospace',fontWeight:700,marginLeft:10}}>{fmt(fix)}</span>
+                  <span style={{fontSize:13,color:'#64748b',marginLeft:8}}>· {fPct}%</span>
+                </div>
+              </div>
+
+              <p style={{fontSize:13,color:'#94a3b8',lineHeight:1.5,margin:0}}>{copy}</p>
+            </div>
+          )
+        })()}
+
         {/* SPENDING EXPLANATION */}
         <SpendingExplanation expTotal={totalExp} cardPmts={cardPmts} transfers={transfers} credits={credits} acctFilter={acctFilter}/>
 
         {/* FIXED EXPENSES */}
         <FixedSummaryCard/>
-
-        {/* BREAKDOWN + BUDGET BY CATEGORY */}
-        <div style={{display:'grid',gridTemplateColumns:'1fr 1.4fr',gap:14,marginBottom:14,alignItems:'stretch'}}>
-
-          {/* Spending breakdown donut */}
-          <div style={{...card,display:'flex',flexDirection:'column',minHeight:420}}>
-            <p style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1.2px',marginBottom:16}}>Where your money went</p>
-            {donutData.length>0?(
-              <>
-                <div style={{position:'relative',width:152,height:152,margin:'0 auto 20px'}}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie data={donutData} cx="50%" cy="50%" innerRadius={46} outerRadius={72} dataKey="val" paddingAngle={2} strokeWidth={0} onClick={d=>setDrillCat(d.name)} style={{cursor:'pointer'}}>
-                        {donutData.map((d,i)=><Cell key={i} fill={d.fill}/>)}
-                      </Pie>
-                      <Tooltip formatter={(v,n)=>[fmt(v),n]}/>
-                    </PieChart>
-                  </ResponsiveContainer>
-                  <div style={{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',pointerEvents:'none'}}>
-                    <span style={{fontSize:17,fontWeight:800,color:'#f1f5f9'}}>{fmt(acctTotal)}</span>
-                    <span style={{fontSize:10,color:'#334155'}}>total</span>
-                  </div>
-                </div>
-                <div style={{display:'flex',flexDirection:'column',gap:1,overflowY:'auto',flex:1,paddingRight:2}}>
-                  {donutData.map((c,i)=>(
-                    <div key={i} style={{display:'flex',alignItems:'center',padding:'8px 10px',borderRadius:9,cursor:'pointer',transition:'background 0.15s'}}
-                      onClick={()=>setDrillCat(c.name)}
-                      onMouseEnter={e=>e.currentTarget.style.background='#151720'}
-                      onMouseLeave={e=>e.currentTarget.style.background='transparent'}>
-                      <div style={{width:8,height:8,borderRadius:2,background:c.fill,marginRight:10,flexShrink:0}}/>
-                      <span style={{flex:1,fontSize:13,color:'#94a3b8'}}>{c.name}</span>
-                      <span style={{fontSize:13,fontWeight:700,color:'#e2e8f0',fontFamily:'monospace'}}>{fmt(c.val)}</span>
-                      <span style={{fontSize:10,color:'#283244',marginLeft:8}}>→</span>
-                    </div>
-                  ))}
-                </div>
-              </>
-            ):(
-              <div style={{textAlign:'center',padding:'40px 0',color:'#334155',fontSize:13}}>No expenses in this period</div>
-            )}
-          </div>
-
-          {/* Budget by category — improved */}
-          <div style={{...card,display:'flex',flexDirection:'column',minHeight:420}}>
-            <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:16}}>
-              <p style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1.2px'}}>Budget by category</p>
-              <span style={{fontSize:10,color:'#334155',background:'#151720',padding:'3px 8px',borderRadius:5,fontWeight:600}}>Flexible only</span>
-            </div>
-            {varCatEntries.length>0?(
-              <div style={{display:'flex',flexDirection:'column',gap:4,overflowY:'auto',flex:1,paddingRight:2}}>
-                {varCatEntries
-                  .filter(c=>!['Transfer','Payment','Salary','Other Income','Refund','Credit Card Payment','Loan Payment','Income','Other'].includes(c.name))
-                  .slice(0,7).map((c,i)=>{
-                  const b = catBudgets[c.name]||0
-                  const over = b>0&&c.val>b
-                  const near = b>0&&!over&&c.val/b>0.8
-                  const barColor = over?'#ef4444':near?'#f59e0b':'#10b981'
-                  const catColorIdx = catEntries.findIndex(e=>e.name===c.name)
-                  const catColor = catColorIdx>=0?COLORS[catColorIdx%COLORS.length]:'#64748b'
-                  const catIcon = CAT_ICONS[c.name]||'📦'
-                  const barPct = b>0?Math.min(pct(c.val,b),100):0
-                  const left = b>0?b-c.val:null
-                  return (
-                    <div key={i} style={{padding:'12px 14px',borderRadius:12,background:i%2===0?'#0d1018':'transparent',cursor:'pointer',transition:'background 0.15s'}}
-                      onClick={()=>setDrillCat(c.name)}
-                      onMouseEnter={e=>e.currentTarget.style.background='#151720'}
-                      onMouseLeave={e=>e.currentTarget.style.background=i%2===0?'#0d1018':'transparent'}>
-                      <div style={{display:'flex',justifyContent:'space-between',alignItems:'center',marginBottom:8}}>
-                        <div style={{display:'flex',alignItems:'center',gap:8}}>
-                          <span style={{fontSize:13,marginRight:2}}>{catIcon}</span>
-                          <span style={{fontSize:13,color:'#e2e8f0',fontWeight:500}}>{c.name}</span>
-                          {over&&<span style={{fontSize:10,color:'#ef4444',background:'rgba(239,68,68,0.1)',padding:'1px 6px',borderRadius:4,fontWeight:600}}>over</span>}
-                          {near&&<span style={{fontSize:10,color:'#f59e0b',background:'rgba(245,158,11,0.1)',padding:'1px 6px',borderRadius:4,fontWeight:600}}>near limit</span>}
-                        </div>
-                        <div style={{display:'flex',alignItems:'center',gap:8}}>
-                          <span style={{fontSize:13,fontWeight:700,color:'#f1f5f9',fontFamily:'monospace'}}>{fmt(c.val)}</span>
-                          {editBudget===c.name?(
-                            <div style={{display:'flex',gap:4,alignItems:'center'}}>
-                              <span style={{fontSize:11,color:'#475569'}}>/</span>
-                              <input type="number" autoFocus defaultValue={b||''}
-                                onBlur={e=>{
-                                  const newVal = parseFloat(e.target.value)||0
-                                  const others = Object.entries(catBudgets).filter(([k])=>k!==c.name).reduce((s,[,v])=>s+v,0)
-                                  const newTotal = others + newVal
-                                  if(monthlyBudget>0 && newTotal>monthlyBudget){
-                                    const ok = window.confirm('This limit makes your total category budgets '+fmt(newTotal)+', which exceeds your '+fmt(monthlyBudget)+' monthly budget. Save anyway?')
-                                    if(!ok){setEditBudget(null);return}
-                                  }
-                                  setCatBudgets(p=>({...p,[c.name]:newVal}))
-                                  setEditBudget(null)
-                                }}
-                                onKeyDown={e=>{if(e.key==='Enter'){
-                                  const newVal = parseFloat(e.target.value)||0
-                                  const others = Object.entries(catBudgets).filter(([k])=>k!==c.name).reduce((s,[,v])=>s+v,0)
-                                  const newTotal = others + newVal
-                                  if(monthlyBudget>0 && newTotal>monthlyBudget){
-                                    const ok = window.confirm('This limit makes your total category budgets '+fmt(newTotal)+', which exceeds your '+fmt(monthlyBudget)+' monthly budget. Save anyway?')
-                                    if(!ok){setEditBudget(null);return}
-                                  }
-                                  setCatBudgets(p=>({...p,[c.name]:newVal}))
-                                  setEditBudget(null)
-                                }}}
-                                style={{width:72,background:'#1e2030',border:'1px solid #3b82f6',borderRadius:6,padding:'3px 8px',color:'#fff',fontSize:12,outline:'none',fontFamily:'monospace'}}/>
-                            </div>
-                          ):(
-                            <span style={{fontSize:11,color:'#283244',cursor:'pointer'}} onClick={e=>{e.stopPropagation();setEditBudget(c.name)}}>
-                              {b>0?'/ '+fmt(b):'Set limit'}
-                            </span>
-                          )}
-                        </div>
-                      </div>
-                      {/* Progress bar */}
-                      {b>0?(
-                        <>
-                          <div style={{background:'#1a1f2e',borderRadius:99,height:7,overflow:'hidden',marginBottom:5}}>
-                            <div style={{height:'100%',borderRadius:99,width:barPct+'%',background:over?'#ef4444':near?'#f59e0b':catColor,transition:'width 0.5s'}}/>
-                          </div>
-                          <div style={{display:'flex',justifyContent:'space-between',fontSize:11}}>
-                            <span style={{color:over?'#ef4444':near?'#f59e0b':'#10b981',fontWeight:600}}>
-                              {over?fmt(Math.abs(left))+' over':fmt(left)+' left'}
-                            </span>
-                            <span style={{color:'#334155'}}>{barPct}% used</span>
-                          </div>
-                        </>
-                      ):(
-                        <div style={{background:'#1a1f2e',borderRadius:99,height:4,overflow:'hidden',opacity:0.3}}>
-                          <div style={{height:'100%',width:'100%',background:'#283244',borderRadius:99}}/>
-                        </div>
-                      )}
-                    </div>
-                  )
-                })}
-              </div>
-            ):(
-              <div style={{textAlign:'center',padding:'40px 0',color:'#334155',fontSize:13}}>No flexible expenses in this period</div>
-            )}
-          </div>
-        </div>
 
         {/* TREND + INSIGHTS side by side */}
         <div style={{display:'grid',gridTemplateColumns:'1.2fr 1fr',gap:14,marginBottom:14,alignItems:'stretch'}}>
