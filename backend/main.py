@@ -2,7 +2,7 @@ from fastapi import FastAPI, UploadFile, File, Depends, HTTPException, Form
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from database import engine, Base, get_db
-from fixed_classifier import classify_all_transactions, normalize_merchant
+from fixed_classifier import classify_all_transactions, normalize_merchant, display_merchant
 from models import BudgetHistory
 from models import (
     Transaction, TransactionRule, User, Account,
@@ -966,8 +966,9 @@ def _month_totals(db: Session, ym: str) -> dict:
             entry["amount"] += amt
             entry["count"] += 1
             if biggest is None or amt > biggest["amount"]:
+                clean_name = display_merchant(t.description or "") or "Unknown"
                 biggest = {
-                    "merchant": (t.description or "").strip()[:80] or "Unknown",
+                    "merchant": clean_name[:80],
                     "amount": round(amt, 2),
                     "date": str(t.transaction_date) if t.transaction_date else None,
                     "category": cat,

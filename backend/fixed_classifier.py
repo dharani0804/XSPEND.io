@@ -103,6 +103,64 @@ def normalize_merchant(description: str) -> str:
     d = re.sub(r'\s+', ' ', d).strip()
     return d[:32].strip()
 
+def display_merchant(description: str) -> str:
+    """Clean a raw bank description into a display name.
+    Used for dashboard surfaces (biggest_charge, etc) — not for classification.
+    Prefers generic cleanup over the map so we don't mislabel
+    (e.g. AMAZON.COM purchase != Amazon Prime subscription)."""
+    if not description:
+        return ''
+
+    d = description.strip()
+
+    # Strip noise tokens
+    d = re.sub(r'\b[A-Z0-9]*\*[A-Z0-9]+', '', d)         # *XYZ123 or PREFIX*XYZ123
+    d = re.sub(r'#\d+', '', d)                            # #0106 location codes
+    d = re.sub(r'\b\d{6,}\b', '', d)                    # 6+ digit references
+    d = re.sub(r'\d{1,2}/\d{1,2}(?:/\d{2,4})?', '', d)  # mm/dd or mm/dd/yyyy
+    d = re.sub(r'\bhttps?://\S+', '', d)                 # full URLs
+    d = re.sub(r'\b[a-z0-9-]+\.(?:com|net|org|io|co)\b', '', d, flags=re.I)  # domains
+    d = re.sub(r'\s+\b[A-Z]{2}\b\s*$', '', d)          # trailing 2-letter state
+    d = re.sub(r'[*#]', '', d)                             # leftover * and #
+    d = re.sub(r'\s+', ' ', d).strip()
+
+    # Final cleanup: strip orphan punctuation fragments left behind by earlier
+    # substitutions (e.g. "Help.", "04/", "/helppay", "Amazon.")
+    d = re.sub(r'\s[/\\][\w]*', ' ', d)              # mid/end slash-words like " /helppay"
+    d = re.sub(r'\b[\w]+[/\\]\s', ' ', d)           # word ending with slash like "04/"
+    d = re.sub(r'\b(\w)[.](?=\s|$)', r'\1', d)       # word ending with single dot like "Amazon."
+    d = re.sub(r'(?<=\w)[.,;:!?-]+\s*$', '', d)        # trailing punctuation after word
+    d = re.sub(r'\b[A-Z]{2}\b\s*$', '', d, flags=re.I)  # trailing 2-letter state/abbrev
+    d = re.sub(r'\s+', ' ', d).strip()
+
+    if not d:
+        return description.strip()[:50]
+
+    # Title case with smart rules
+    SMALL_WORDS = {'by', 'of', 'the', 'and', 'or', 'for', 'a', 'an', 'at', 'to', 'in', 'on'}
+    KNOWN_ACRONYMS = {'REI', 'NTTA', 'AMC', 'ATM', 'USPS', 'AT&T', 'NYC', 'LA', 'SF', 'BBQ',
+                      'CVS', 'TJX', 'IKEA', 'IRS', 'DMV', 'DSW', 'IHOP', 'KFC', 'MGM'}
+    words = d.split()
+    out = []
+    for i, w in enumerate(words):
+        # Strip trailing punctuation for matching
+        stripped = re.sub(r'[^\w+]+$', '', w)
+        suffix = w[len(stripped):]
+        # Known acronym?
+        if stripped.upper() in KNOWN_ACRONYMS:
+            out.append(stripped.upper() + suffix)
+        # Small connector word in middle of phrase?
+        elif i > 0 and stripped.lower() in SMALL_WORDS:
+            out.append(stripped.lower() + suffix)
+        # Default: capitalize first letter, lowercase rest
+        elif stripped:
+            out.append(stripped[0].upper() + stripped[1:].lower() + suffix)
+        else:
+            out.append(w)
+    return ' '.join(out)[:50]
+
+
+
 def dedup_key(description: str) -> str:
     """4-char alphabetic key for aggressive merchant deduplication."""
     norm = normalize_merchant(description)
