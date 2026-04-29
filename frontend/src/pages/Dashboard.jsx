@@ -533,103 +533,74 @@ export default function Dashboard() {
         )}
 
         {/* ── 3 KPI CARDS ── */}
-        <div style={{display:'grid',gridTemplateColumns:'1.4fr 1fr 1fr',gap:12,marginBottom:12}}>
+        {/* HERO KPIs — Awareness-first redesign */}
+        <div style={{display:'grid',gridTemplateColumns:'1fr 1fr 1fr',gap:12,marginBottom:14}}>
 
-          {/* Left to Spend — HERO */}
-          <div style={{background:isOverBudget?'rgba(239,68,68,0.04)':'rgba(59,130,246,0.04)',border:`1px solid ${monthlyBudget===0?'#1e2030':isOverBudget?'rgba(239,68,68,0.25)':'rgba(59,130,246,0.2)'}`,borderRadius:20,padding:'28px 32px',position:'relative',overflow:'hidden'}}>
-            <div style={{position:'absolute',top:-40,right:-40,width:160,height:160,borderRadius:'50%',background:isOverBudget?'rgba(239,68,68,0.04)':'rgba(59,130,246,0.04)'}}/>
-            {monthlyBudget===0?(
-              <div>
-                <p style={{fontSize:11,color:'#475569',textTransform:'uppercase',letterSpacing:'1px',marginBottom:16,fontWeight:600}}>Monthly budget</p>
-                <p style={{fontSize:14,color:'#64748b',marginBottom:20,lineHeight:1.7}}>Set a monthly budget to start tracking</p>
-                {editingMonthlyBudget?(
-                  <div style={{display:'flex',gap:8,alignItems:'center'}}>
-                    <span style={{color:'#475569',fontSize:18}}>$</span>
-                    <input autoFocus type="number" value={budgetInput} onChange={e=>setBudgetInput(e.target.value)}
-                      onKeyDown={e=>{if(e.key==='Enter'&&budgetInput){saveProfile('monthly_budget',parseFloat(budgetInput));setEditingMonthlyBudget(false)}if(e.key==='Escape')setEditingMonthlyBudget(false)}}
-                      style={{background:'#1e2030',border:'1px solid #3b82f6',borderRadius:10,padding:'8px 12px',color:'#fff',fontSize:18,outline:'none',fontFamily:'monospace',width:130}}/>
-                    <button onClick={()=>{if(budgetInput){saveProfile('monthly_budget',parseFloat(budgetInput));setEditingMonthlyBudget(false)}}} style={{background:'#3b82f6',border:'none',borderRadius:10,padding:'8px 14px',color:'#fff',fontSize:13,cursor:'pointer',fontFamily:F,fontWeight:700}}>Set</button>
-                  </div>
-                ):(
-                  <button onClick={()=>{setEditingMonthlyBudget(true);setBudgetInput('')}} style={{background:'#3b82f6',border:'none',borderRadius:12,padding:'10px 20px',color:'#fff',fontSize:13,cursor:'pointer',fontFamily:F,fontWeight:700}}>+ Set budget</button>
-                )}
+          {/* Card 1: SPENT — primary KPI, slightly larger */}
+          <div style={{background:'#0f1117',border:'1px solid #1e2030',borderRadius:18,padding:'24px 26px'}}>
+            <p style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1.2px',marginBottom:18}}>Spent</p>
+            <div style={{fontSize:36,fontWeight:800,color:'#10b981',letterSpacing:'-1.2px',fontFamily:'monospace',lineHeight:1,marginBottom:14}}>
+              {summary?.current_month ? fmt(summary.current_month.total) : '—'}
+            </div>
+            {(compShow||compUnavailableShow) ? (
+              <div style={{marginBottom:14}}>
+                <span style={{fontSize:12,padding:'4px 10px',borderRadius:8,fontWeight:700,background:compBg,color:compColor,display:'inline-block'}}>
+                  {compArrow}{compText}
+                </span>
               </div>
-            ):(
-              <div>
-                <div style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',marginBottom:10}}>
-                  <p style={{fontSize:11,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1px',fontWeight:600}}>{isOverBudget?'Over budget':'Left to spend'}</p>
-                  <button onClick={()=>{setEditingMonthlyBudget(true);setBudgetInput(String(monthlyBudget))}}
-                    style={{background:'rgba(59,130,246,0.08)',border:'1px solid rgba(59,130,246,0.2)',borderRadius:7,padding:'3px 10px',fontSize:11,color:'#3b82f6',cursor:'pointer',fontFamily:F,fontWeight:600}}>
-                    ✎ {fmt(monthlyBudget)}
-                  </button>
+            ) : (
+              <div style={{height:14,marginBottom:14}}/>
+            )}
+            <p style={{fontSize:12,color:'#475569',margin:0}}>
+              {summary?.current_month?.txn_count ?? 0} transactions
+            </p>
+          </div>
+
+          {/* Card 2: TOP CATEGORY */}
+          <div style={{background:'#0f1117',border:'1px solid #1e2030',borderRadius:18,padding:'24px 26px'}}>
+            <p style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1.2px',marginBottom:18}}>Top category</p>
+            {summary?.current_month?.top_category ? (
+              <>
+                <div style={{fontSize:28,fontWeight:800,color:'#f1f5f9',letterSpacing:'-0.5px',lineHeight:1.1,marginBottom:14}}>
+                  {summary.current_month.top_category.name}
                 </div>
-                {editingMonthlyBudget?(
-                  <div style={{display:'flex',gap:8,alignItems:'center',marginBottom:14}}>
-                    <span style={{color:'#475569',fontSize:20}}>$</span>
-                    <input autoFocus type="number" value={budgetInput} onChange={e=>setBudgetInput(e.target.value)}
-                      onKeyDown={e=>{if(e.key==='Enter'&&budgetInput){saveProfile('monthly_budget',parseFloat(budgetInput));setEditingMonthlyBudget(false)}if(e.key==='Escape')setEditingMonthlyBudget(false)}}
-                      style={{background:'#1e2030',border:'1px solid #3b82f6',borderRadius:10,padding:'6px 10px',color:'#fff',fontSize:22,outline:'none',fontFamily:'monospace',width:130}}/>
-                    <button onClick={()=>{if(budgetInput){saveProfile('monthly_budget',parseFloat(budgetInput));setEditingMonthlyBudget(false)}}} style={{background:'#3b82f6',border:'none',borderRadius:8,padding:'7px 12px',color:'#fff',fontSize:12,cursor:'pointer',fontFamily:F,fontWeight:700}}>Save</button>
-                  </div>
-                ):(
-                  <div style={{fontSize:52,fontWeight:800,color:isOverBudget?'#ef4444':'#3b82f6',letterSpacing:'-2px',lineHeight:1,marginBottom:12,fontFamily:'monospace'}}>
-                    {isOverBudget?'-':''}{fmt(Math.abs(leftToSpend))}
-                  </div>
-                )}
-                <div style={{background:'#1a1f2e',borderRadius:99,height:6,overflow:'hidden',marginBottom:8}}>
-                  <div style={{height:'100%',borderRadius:99,width:budgetUsedPct+'%',background:`linear-gradient(90deg,${budgetBarColor},${budgetBarColor}cc)`,transition:'width 0.6s ease'}}/>
+                <div style={{fontSize:13,color:'#94a3b8',marginBottom:14}}>
+                  <span style={{fontFamily:'monospace',color:'#10b981',fontWeight:700}}>{fmt(summary.current_month.top_category.amount)}</span>
+                  <span style={{color:'#475569',margin:'0 6px'}}>·</span>
+                  <span>{summary.current_month.top_category.pct_of_flexible}%</span>
                 </div>
-                <div style={{display:'flex',justifyContent:'space-between',fontSize:11,marginBottom:8}}>
-                  <span style={{color:'#475569'}}>{fmt(totalVar)} spent</span>
-                  <span style={{color:budgetBarColor,fontWeight:700}}>{budgetUsedPct}%</span>
-                </div>
-                {paceInfo&&(
-                  <div style={{fontSize:11,color:paceInfo.onTrack?'#10b981':'#f59e0b',background:paceInfo.onTrack?'rgba(16,185,129,0.08)':'rgba(245,158,11,0.08)',padding:'5px 10px',borderRadius:7}}>
-                    {paceInfo.onTrack?'✓ On pace':'⚡ Ahead of pace'} · {paceInfo.daysLeft}d left
-                  </div>
-                )}
-              </div>
+                <p style={{fontSize:12,color:'#475569',margin:0}}>
+                  {summary.current_month.top_category.txn_count} transaction{summary.current_month.top_category.txn_count===1?'':'s'}
+                </p>
+              </>
+            ) : (
+              <div style={{fontSize:14,color:'#475569'}}>No flexible spending this month</div>
             )}
           </div>
 
-          {/* Total Expenses */}
-          <div style={{background:'#0f1117',border:'1px solid #1e2030',borderRadius:18,padding:'22px 24px',display:'flex',flexDirection:'column',justifyContent:'space-between'}}>
-            <p style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1.2px',marginBottom:12}}>Total expenses</p>
-            <div>
-              <div style={{fontSize:32,fontWeight:800,color:'#ef4444',letterSpacing:'-1.5px',marginBottom:8,fontFamily:'monospace'}}>{fmt(totalExp)}</div>
-              {(compShow||compUnavailableShow)&&(
-                <span style={{fontSize:12,padding:'4px 10px',borderRadius:8,fontWeight:700,background:compBg,color:compColor}}>
-                  {compArrow}{compText}
-                </span>
-              )}
-              <p style={{fontSize:12,color:'#334155',marginTop:8}}>{allExp.length} transactions</p>
-            </div>
+          {/* Card 3: BIGGEST CHARGE */}
+          <div style={{background:'#0f1117',border:'1px solid #1e2030',borderRadius:18,padding:'24px 26px'}}>
+            <p style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1.2px',marginBottom:18}}>Biggest charge</p>
+            {summary?.current_month?.biggest_charge ? (
+              <>
+                <div style={{fontSize:28,fontWeight:800,color:'#f1f5f9',letterSpacing:'-0.5px',lineHeight:1.1,marginBottom:14,wordBreak:'break-word'}}>
+                  {summary.current_month.biggest_charge.merchant}
+                </div>
+                <div style={{fontSize:14,color:'#10b981',fontWeight:700,marginBottom:14,fontFamily:'monospace'}}>
+                  {fmt(summary.current_month.biggest_charge.amount)}
+                </div>
+                <p style={{fontSize:12,color:'#475569',margin:0}}>
+                  {summary.current_month.biggest_charge.date && new Date(summary.current_month.biggest_charge.date+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric'})}
+                  {summary.current_month.biggest_charge.category && (
+                    <span> · {summary.current_month.biggest_charge.category}</span>
+                  )}
+                </p>
+              </>
+            ) : (
+              <div style={{fontSize:14,color:'#475569'}}>No charges this month</div>
+            )}
           </div>
 
-          {/* Variable vs Fixed — redesigned */}
-          <div style={{background:'#0f1117',border:'1px solid #1e2030',borderRadius:18,padding:'22px 24px'}}>
-            <p style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1.2px',marginBottom:16}}>Where it goes</p>
-            <div style={{marginBottom:14}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
-                <span style={{fontSize:12,color:'#94a3b8',fontWeight:500}}>Flexible</span>
-                <span style={{fontSize:20,fontWeight:800,color:'#f1f5f9',fontFamily:'monospace'}}>{fmt(totalVar)}</span>
-              </div>
-              <div style={{background:'#1a1f2e',borderRadius:99,height:8,overflow:'hidden',marginBottom:4}}>
-                <div style={{height:'100%',borderRadius:99,width:acctTotal>0?Math.min(Math.round(totalVar/acctTotal*100),100)+'%':'0%',background:'linear-gradient(90deg,#3b82f6,#6366f1)',transition:'width 0.5s'}}/>
-              </div>
-              <p style={{fontSize:10,color:'#64748b'}}>flexible spending only</p>
-            </div>
-            <div style={{paddingTop:12,borderTop:'1px solid #1e2030'}}>
-              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:6}}>
-                <span style={{fontSize:12,color:'#64748b',fontWeight:500}}>Committed</span>
-                <span style={{fontSize:18,fontWeight:700,color:'#64748b',fontFamily:'monospace'}}>{fmt(totalFixed)}</span>
-              </div>
-              <div style={{background:'#1a1f2e',borderRadius:99,height:5,overflow:'hidden',marginBottom:4}}>
-                <div style={{height:'100%',borderRadius:99,width:acctTotal>0?Math.min(Math.round(totalFixed/acctTotal*100),100)+'%':'0%',background:'#283244',transition:'width 0.5s'}}/>
-              </div>
-              <p style={{fontSize:10,color:'#64748b'}}>committed · excluded from budget</p>
-            </div>
-          </div>
         </div>
 
         {/* SPENDING EXPLANATION */}
