@@ -63,6 +63,33 @@ MERCHANT_DISPLAY_MAP = {
     'wall': 'Walmart+',
 }
 
+# Known merchants whose apostrophes get stripped by bank exports.
+# Applied as the final step in display_merchant() — keys are lowercase,
+# values are the proper display form.
+KNOWN_MERCHANTS = {
+    'trader joe s': "Trader Joe's",
+    'sam s club': "Sam's Club",
+    'macy s': "Macy's",
+    "macy s": "Macy's",
+    'domino s': "Domino's",
+    'mcdonald s': "McDonald's",
+    'wendy s': "Wendy's",
+    'lowe s': "Lowe's",
+    'kohl s': "Kohl's",
+    'arby s': "Arby's",
+    'jack in the box': "Jack in the Box",
+    'whole foods': "Whole Foods",
+    'in n out': "In-N-Out",
+    'in-n-out': "In-N-Out",
+    'chick fil a': "Chick-fil-A",
+    'chick-fil-a': "Chick-fil-A",
+    'd airy queen': "Dairy Queen",
+    'panda express': "Panda Express",
+    'olive garden': "Olive Garden",
+    'red lobster': "Red Lobster",
+    'taco bell': "Taco Bell",
+}
+
 SUBSCRIPTION_KEYWORDS = {
     'netflix', 'spotify', 'hulu', 'disney', 'apple', 'amazon prime',
     'youtube', 'hbo', 'paramount', 'peacock', 'crunchyroll', 'audible',
@@ -157,7 +184,13 @@ def display_merchant(description: str) -> str:
             out.append(stripped[0].upper() + stripped[1:].lower() + suffix)
         else:
             out.append(w)
-    return ' '.join(out)[:50]
+    result = ' '.join(out)[:50]
+    # Final pass: check known-merchant correction list
+    # (handles bank-stripped apostrophes like "Trader Joe S" -> "Trader Joe's")
+    key = result.lower().strip()
+    if key in KNOWN_MERCHANTS:
+        return KNOWN_MERCHANTS[key]
+    return result
 
 
 
