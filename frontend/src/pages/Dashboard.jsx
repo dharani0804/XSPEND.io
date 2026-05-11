@@ -4,11 +4,20 @@ import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGri
 
 const COLORS = ['#3b82f6','#10b981','#f59e0b','#8b5cf6','#ef4444','#64748b']
 const CAT_ICONS = {
-  'Food & Dining':'🍽️','Groceries':'🛒','Transport':'🚗','Rent & Utilities':'⚡',
+  // Core expense categories
+  'Food & Dining':'🍽️','Groceries':'🛒','Transport':'🚗','Bills & Utilities':'⚡',
   'Subscriptions':'📱','Health':'💊','Shopping':'🛍️','Entertainment':'🎬',
   'Travel':'✈️','Personal Care':'💆','Pets':'🐾','Education':'📚',
-  'Salary':'💰','Transfer':'↔️','Payment':'💳','Other':'📦',
-  'Others':'📦','Uncategorized':'❓'
+  // Added in canonical 29
+  'Alcohol & Liquor':'🍷','Baby & Kids':'🍼','Bank Fees':'🏦','Cash & ATM':'💵',
+  'Gifts & Donations':'🎁','Government & Taxes':'🏛️','Home Improvement':'🔨',
+  'Insurance':'🛡️','Professional Services':'💼',
+  // Income, transfers, payments, misc
+  'Salary':'💰','Other Income':'💵','Transfer':'↔️',
+  'Credit Card Payment':'💳','Card Credit':'↩️','Loan Payment':'📉',
+  'Refund':'↩️','Other':'📦',
+  // Aliases / safety
+  'Others':'📦','Payment':'💳','Uncategorized':'❓'
 }
 const FIXED_CATS = new Set(['bills & utilities','bills','utilities','rent','mortgage','insurance','loan payment','debt payment','credit card payment'])
 const CARD_KEYWORDS = ['uber one credit','amex credit','credit applied','statement credit','annual credit','travel credit','hotel credit','reward credit','cash back','cashback','capital one credit','membership credit']
@@ -651,6 +660,100 @@ export default function Dashboard() {
               </div>
 
               <p style={{fontSize:13,color:'#94a3b8',lineHeight:1.5,margin:0}}>{copy}</p>
+            </div>
+          )
+        })()}
+
+        {/* SPENDING BY CATEGORY — Section 3, Phase 2 (Chunk 2: collapsed list) */}
+        {summary?.current_month?.categories && summary.current_month.categories.length > 0 && (() => {
+          const cats = summary.current_month.categories
+          // Split into shown + others (< 2% pct_of_flexible)
+          const shown = cats.filter(c => c.pct_of_flexible >= 2)
+          const others = cats.filter(c => c.pct_of_flexible < 2)
+          const othersTotal = others.reduce((s, c) => s + c.amount, 0)
+          const othersCount = others.reduce((s, c) => s + c.txn_count, 0)
+          const othersPct = others.reduce((s, c) => s + c.pct_of_flexible, 0)
+          // Top amount for relative-bar scaling (uses the largest category, NOT total)
+          const topAmount = cats[0]?.amount || 1
+          return (
+            <div style={{background:'#0f1117',border:'1px solid #1e2030',borderRadius:18,padding:'24px 26px',marginBottom:14}}>
+              <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:18}}>
+                <p style={{fontSize:11,fontWeight:700,color:'#94a3b8',textTransform:'uppercase',letterSpacing:'1.2px'}}>
+                  Spending by category
+                </p>
+                <span style={{fontSize:12,color:'#475569'}}>
+                  {shown.length} categor{shown.length === 1 ? 'y' : 'ies'} · flexible only
+                </span>
+              </div>
+
+              <div style={{display:'flex',flexDirection:'column',gap:2}}>
+                {shown.map((c, i) => {
+                  const barPct = Math.max(2, Math.round((c.amount / topAmount) * 100))
+                  const icon = CAT_ICONS[c.name] || '📦'
+                  return (
+                    <div
+                      key={c.name}
+                      style={{
+                        display:'grid',
+                        gridTemplateColumns:'28px 1fr 90px 180px 50px 20px',
+                        gap:14,
+                        alignItems:'center',
+                        padding:'12px 8px',
+                        borderRadius:10,
+                        cursor:'pointer',
+                        transition:'background 0.15s',
+                      }}
+                      onMouseEnter={e => e.currentTarget.style.background = '#151720'}
+                      onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                      onClick={() => { /* expansion lives in Chunk 3 */ }}
+                    >
+                      <span style={{fontSize:18}}>{icon}</span>
+                      <span style={{fontSize:14,color:'#f1f5f9',fontWeight:500}}>{c.name}</span>
+                      <span style={{fontSize:14,fontWeight:700,color:'#10b981',fontFamily:'monospace',textAlign:'right'}}>
+                        {fmt(c.amount)}
+                      </span>
+                      <div style={{background:'#1a1f2e',borderRadius:99,height:6,overflow:'hidden'}}>
+                        <div style={{height:'100%',width:`${barPct}%`,background:'linear-gradient(90deg,#3b82f6,#6366f1)',transition:'width 0.5s'}}/>
+                      </div>
+                      <span style={{fontSize:13,color:'#64748b',textAlign:'right'}}>{Math.round(c.pct_of_flexible)}%</span>
+                      <span style={{fontSize:14,color:'#475569',textAlign:'center'}}>›</span>
+                    </div>
+                  )
+                })}
+
+                {others.length > 0 && (
+                  <div
+                    style={{
+                      display:'grid',
+                      gridTemplateColumns:'28px 1fr 90px 180px 50px 20px',
+                      gap:14,
+                      alignItems:'center',
+                      padding:'12px 8px',
+                      marginTop:6,
+                      borderTop:'1px solid #1e2030',
+                      paddingTop:14,
+                      cursor:'pointer',
+                      borderRadius:10,
+                      transition:'background 0.15s',
+                    }}
+                    onMouseEnter={e => e.currentTarget.style.background = '#151720'}
+                    onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <span style={{fontSize:16}}>📦</span>
+                    <span style={{fontSize:13,color:'#94a3b8'}}>
+                      Others <span style={{color:'#475569',marginLeft:6}}>· {others.length} categor{others.length === 1 ? 'y' : 'ies'} · {othersCount} txn{othersCount === 1 ? '' : 's'}</span>
+                    </span>
+                    <span style={{fontSize:13,fontWeight:700,color:'#10b981',fontFamily:'monospace',textAlign:'right'}}>
+                      {fmt(othersTotal)}
+                    </span>
+                    <div style={{background:'#1a1f2e',borderRadius:99,height:4,overflow:'hidden',opacity:0.6}}>
+                      <div style={{height:'100%',width:`${Math.max(2, Math.round((othersTotal / topAmount) * 100))}%`,background:'#475569',transition:'width 0.5s'}}/>
+                    </div>
+                    <span style={{fontSize:12,color:'#475569',textAlign:'right'}}>{Math.round(othersPct)}%</span>
+                    <span style={{fontSize:14,color:'#475569',textAlign:'center'}}>›</span>
+                  </div>
+                )}
+              </div>
             </div>
           )
         })()}
